@@ -44,6 +44,18 @@ function maybeTranslateIdentifierError(error) {
   }
 }
 
+function buildIdentifierPreview(identifier) {
+  if (identifier.imei) {
+    return { imei: identifier.imei };
+  }
+
+  return {
+    serialNumber: identifier.serialNumber,
+    manufacturer: identifier.manufacturer,
+    model: identifier.model,
+  };
+}
+
 async function resolveCustomerIdFromAuth(req) {
   const clientDbId = Number(req.auth.clientDbId);
   const client = await getClientByDbId(clientDbId);
@@ -78,6 +90,10 @@ router.get('/customers', async (req, res, next) => {
     });
     res.json(data);
   } catch (error) {
+    if (error.name === 'ZodError') {
+      error.statusCode = 400;
+      error.message = error.issues.map((item) => item.message).join(', ');
+    }
     next(error);
   }
 });
@@ -182,6 +198,79 @@ router.get('/devices', async (req, res, next) => {
   }
 });
 
+router.get('/devices/identifier-options', async (req, res, next) => {
+  try {
+    const schema = z.object({
+      forceSync: z.string().optional(),
+    });
+    const query = schema.parse(req.query);
+
+    const customerId = await resolveCustomerIdFromAuth(req);
+
+    if (String(query.forceSync || '').toLowerCase() === 'true') {
+      await syncClientDevices({
+        clientDbId: Number(req.auth.clientDbId),
+        customerId,
+      });
+    }
+
+    const rows = await listClientDevices(Number(req.auth.clientDbId));
+    const devices = rows.map((item) => item.raw_payload_json || {});
+
+    const manufacturersSet = new Set();
+    const modelsByManufacturer = {};
+
+    for (const item of devices) {
+      const identifier = item.deviceIdentifier || {};
+      const manufacturer = String(
+        item.manufacturer || identifier.manufacturer || ''
+      ).trim();
+      const model = String(item.model || identifier.model || '').trim();
+
+      if (!manufacturer) {
+        continue;
+      }
+
+      manufacturersSet.add(manufacturer);
+      if (!modelsByManufacturer[manufacturer]) {
+        modelsByManufacturer[manufacturer] = new Set();
+      }
+      if (model) {
+        modelsByManufacturer[manufacturer].add(model);
+      }
+    }
+
+    const manufacturers = Array.from(manufacturersSet).sort((a, b) =>
+      a.localeCompare(b)
+    );
+
+    const normalizedModelsByManufacturer = {};
+    for (const manufacturer of manufacturers) {
+      normalizedModelsByManufacturer[manufacturer] = Array.from(
+        modelsByManufacturer[manufacturer] || []
+      ).sort((a, b) => a.localeCompare(b));
+    }
+
+    await writeAuditLog({
+      userId: Number(req.auth.sub),
+      clientDbId: Number(req.auth.clientDbId),
+      action: 'zerotouch.devices.identifierOptions.list',
+      payload: {
+        customerId,
+        manufacturersCount: manufacturers.length,
+      },
+    });
+
+    res.json({
+      customerId,
+      manufacturers,
+      modelsByManufacturer: normalizedModelsByManufacturer,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post('/devices/claim', async (req, res, next) => {
   try {
     const schema = z.object({
@@ -239,6 +328,141 @@ router.post('/devices/claim', async (req, res, next) => {
       error.message = error.issues.map((item) => item.message).join(', ');
     } else {
       maybeTranslateIdentifierError(error);
+    }
+    next(error);
+  }
+});
+
+router.post('/devices/claim/bulk', async (req, res, next) => {
+  try {
+    const schema = z.object({
+      customerId: z.string().optional(),
+      identifierType: z.enum(['imei', 'serial']),
+      configurationId: z.union([z.string(), z.number()]).optional(),
+      devices: z
+        .array(
+          z.object({
+            imei: z.string().optional(),
+            serialNumber: z.string().optional(),
+            manufacturer: z.string().optional(),
+            model: z.string().optional(),
+            configurationId: z.union([z.string(), z.number()]).optional(),
+          })
+        )
+        .min(1),
+    });
+
+    const body = schema.parse(req.body);
+    const customerId = await resolveCustomerIdFromAuth(req);
+    if (body.customerId && body.customerId !== customerId) {
+      const error = new Error('customerId no autorizado para este cliente.');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    const defaultConfigurationId =
+      body.configurationId === undefined || body.configurationId === null
+        ? undefined
+        : String(body.configurationId).trim();
+
+    if (defaultConfigurationId === '') {
+      const error = new Error('configurationId no puede ser vacio cuando se envia.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const results = [];
+
+    for (let index = 0; index < body.devices.length; index += 1) {
+      const rawDevice = body.devices[index];
+
+      const normalizedForType =
+        body.identifierType === 'imei'
+          ? { imei: rawDevice.imei?.trim() }
+          : {
+              serialNumber: rawDevice.serialNumber?.trim(),
+              manufacturer: rawDevice.manufacturer?.trim(),
+              model: rawDevice.model?.trim(),
+            };
+
+      const identifier = normalizeDeviceIdentifier(normalizedForType);
+      const itemConfigurationId =
+        rawDevice.configurationId === undefined || rawDevice.configurationId === null
+          ? defaultConfigurationId
+          : String(rawDevice.configurationId).trim();
+
+      if (itemConfigurationId === '') {
+        const error = new Error('configurationId no puede ser vacio cuando se envia.');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      try {
+        const claimResponse = await claimDevice({
+          customerId,
+          deviceIdentifier: identifier,
+          configurationId: itemConfigurationId,
+        });
+
+        results.push({
+          index,
+          status: 'claimed',
+          deviceIdentifier: buildIdentifierPreview(identifier),
+          configurationId: itemConfigurationId || null,
+          response: claimResponse,
+        });
+      } catch (error) {
+        maybeTranslateIdentifierError(error);
+        results.push({
+          index,
+          status: 'failed',
+          deviceIdentifier: buildIdentifierPreview(identifier),
+          configurationId: itemConfigurationId || null,
+          error: {
+            message: error.message,
+            statusCode: error.statusCode || 500,
+            details: error.details || null,
+          },
+        });
+      }
+    }
+
+    await syncClientDevices({
+      clientDbId: Number(req.auth.clientDbId),
+      customerId,
+    });
+
+    const successCount = results.filter((item) => item.status === 'claimed').length;
+    const failedCount = results.length - successCount;
+
+    await writeAuditLog({
+      userId: Number(req.auth.sub),
+      clientDbId: Number(req.auth.clientDbId),
+      action: 'zerotouch.devices.claim.bulk',
+      payload: {
+        customerId,
+        identifierType: body.identifierType,
+        total: results.length,
+        successCount,
+        failedCount,
+      },
+    });
+
+    const statusCode = failedCount > 0 && successCount > 0 ? 207 : 200;
+    res.status(statusCode).json({
+      customerId,
+      identifierType: body.identifierType,
+      summary: {
+        total: results.length,
+        successCount,
+        failedCount,
+      },
+      results,
+    });
+  } catch (error) {
+    if (error.name === 'ZodError') {
+      error.statusCode = 400;
+      error.message = error.issues.map((item) => item.message).join(', ');
     }
     next(error);
   }
