@@ -1,0 +1,250 @@
+const bcrypt = require('bcryptjs');
+const { Pool } = require('pg');
+const { config } = require('./config');
+
+const pool = new Pool({
+  connectionString: config.dbUrl,
+});
+
+async function initDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS clients (
+      id BIGSERIAL PRIMARY KEY,
+      client_id TEXT UNIQUE NOT NULL,
+      company_name TEXT NOT NULL,
+      zero_touch_customer_name TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGSERIAL PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS user_clients (
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      client_id BIGINT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'admin',
+      PRIMARY KEY (user_id, client_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT,
+      client_id BIGINT,
+      action TEXT NOT NULL,
+      payload_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS client_devices (
+      id BIGSERIAL PRIMARY KEY,
+      client_db_id BIGINT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      external_key TEXT NOT NULL,
+      device_id TEXT,
+      serial_number TEXT,
+      imei TEXT,
+      model TEXT,
+      manufacturer TEXT,
+      raw_payload_json JSONB NOT NULL,
+      synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (client_db_id, external_key)
+    );
+  `);
+
+  await seedInitialData();
+}
+
+async function seedInitialData() {
+  const countResult = await pool.query('SELECT COUNT(1)::int as total FROM clients');
+  const total = countResult.rows[0].total;
+  if (total > 0) {
+    return;
+  }
+
+  const clientIdValue = 'CLI-1001';
+  const passwordHash = bcrypt.hashSync(clientIdValue, 10);
+
+  const seedClient = await pool.query(
+    `
+      INSERT INTO clients (client_id, company_name, zero_touch_customer_name)
+      VALUES ($1, $2, $3)
+      RETURNING id
+    `,
+    [clientIdValue, 'Cliente Demo Intechsys', 'customers/1791589702']
+  );
+
+  const clientDbId = seedClient.rows[0].id;
+
+  const seedUser = await pool.query(
+    `
+      INSERT INTO users (email, password_hash)
+      VALUES ($1, $2)
+      RETURNING id
+    `,
+    ['cliente.demo@intechsys.com', passwordHash]
+  );
+
+  const userDbId = seedUser.rows[0].id;
+
+  await pool.query(
+    'INSERT INTO user_clients (user_id, client_id, role) VALUES ($1, $2, $3)',
+    [userDbId, clientDbId, 'admin']
+  );
+}
+
+async function writeAuditLog({ userId = null, clientDbId = null, action, payload = {} }) {
+  try {
+    await pool.query(
+      'INSERT INTO audit_logs (user_id, client_id, action, payload_json) VALUES ($1, $2, $3, $4::jsonb)',
+      [userId, clientDbId, action, JSON.stringify(payload)]
+    );
+  } catch (error) {
+    // Do not block main request flow if audit insert fails.
+    console.error('Audit log insert failed:', error.message);
+  }
+}
+
+async function checkDatabaseConnection() {
+  await pool.query('SELECT 1');
+}
+
+async function getClientByDbId(clientDbId) {
+  const result = await pool.query(
+    `
+      SELECT id, client_id, company_name, zero_touch_customer_name, is_active
+      FROM clients
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [clientDbId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function getClientByClientId(clientId) {
+  const result = await pool.query(
+    `
+      SELECT id, client_id, company_name, zero_touch_customer_name, is_active
+      FROM clients
+      WHERE client_id = $1
+      LIMIT 1
+    `,
+    [clientId]
+  );
+
+  return result.rows[0] || null;
+}
+
+function buildExternalKey(raw) {
+  const identifier = raw.deviceIdentifier || {};
+  const deviceId = raw.deviceId || raw.name || '';
+  const serial = identifier.serialNumber || raw.serialNumber || '';
+  const imei = identifier.imei || raw.imei || '';
+  return String(deviceId || serial || imei || `unknown-${Date.now()}`);
+}
+
+async function replaceClientDevices(clientDbId, devices) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    await client.query('DELETE FROM client_devices WHERE client_db_id = $1', [clientDbId]);
+
+    for (const raw of devices) {
+      const identifier = raw.deviceIdentifier || {};
+      const externalKey = buildExternalKey(raw);
+      const deviceId = raw.deviceId || raw.name || null;
+      const serialNumber = identifier.serialNumber || raw.serialNumber || null;
+      const imei = identifier.imei || raw.imei || null;
+      const model = identifier.model || raw.model || null;
+      const manufacturer = identifier.manufacturer || raw.manufacturer || null;
+
+      await client.query(
+        `
+          INSERT INTO client_devices (
+            client_db_id,
+            external_key,
+            device_id,
+            serial_number,
+            imei,
+            model,
+            manufacturer,
+            raw_payload_json,
+            synced_at,
+            updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, now(), now())
+          ON CONFLICT (client_db_id, external_key)
+          DO UPDATE SET
+            device_id = EXCLUDED.device_id,
+            serial_number = EXCLUDED.serial_number,
+            imei = EXCLUDED.imei,
+            model = EXCLUDED.model,
+            manufacturer = EXCLUDED.manufacturer,
+            raw_payload_json = EXCLUDED.raw_payload_json,
+            synced_at = now(),
+            updated_at = now()
+        `,
+        [
+          clientDbId,
+          externalKey,
+          deviceId,
+          serialNumber,
+          imei,
+          model,
+          manufacturer,
+          JSON.stringify(raw),
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function listClientDevices(clientDbId) {
+  const result = await pool.query(
+    `
+      SELECT
+        external_key,
+        device_id,
+        serial_number,
+        imei,
+        model,
+        manufacturer,
+        raw_payload_json,
+        synced_at,
+        updated_at
+      FROM client_devices
+      WHERE client_db_id = $1
+      ORDER BY updated_at DESC
+    `,
+    [clientDbId]
+  );
+
+  return result.rows;
+}
+
+module.exports = {
+  pool,
+  initDatabase,
+  writeAuditLog,
+  checkDatabaseConnection,
+  getClientByDbId,
+  getClientByClientId,
+  replaceClientDevices,
+  listClientDevices,
+};

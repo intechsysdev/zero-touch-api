@@ -1,0 +1,27 @@
+{
+  "name": "backend-intechsys",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend Node.js para login multi-cliente y puente con Zero Touch",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "healthcheck": "node -e \"fetch('http://localhost:' + (process.env.PORT || 8080) + '/health').then(r=>{if(!r.ok) process.exit(1)}).catch(()=>process.exit(1))\"",
+    "zerotouch:devices": "node scripts/list_zerotouch_devices.js",
+    "admin:onboard-client": "node scripts/admin_onboard_client.js",
+    "admin:create-client-user": "node scripts/admin_create_client_user.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "google-auth-library": "^9.15.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.16.3",
+    "zod": "^3.25.76"
+  }
+}
