@@ -5,6 +5,10 @@ const { pool, writeAuditLog } = require('./db');
 const { config } = require('./config');
 const { syncClientDevices } = require('./zerotouch/zerotouch.sync');
 const { listCustomers } = require('./zerotouch/zerotouch.client');
+const {
+  detectSamsungCustomerById,
+  isSamsungConfigured,
+} = require('./samsung/samsung.client');
 
 const loginSchema = z.object({
   email: z.string().optional(),
@@ -21,8 +25,9 @@ async function login(payload) {
     throw error;
   }
 
-  const { clientId, password } = parsed.data;
+  const { clientId, password, email } = parsed.data;
   const normalizedClientId = clientId.trim();
+  const normalizedEmail = String(email || '').trim().toLowerCase();
 
   if (password !== normalizedClientId) {
     const error = new Error('Para este MVP, password debe ser igual al clientId.');
@@ -30,24 +35,87 @@ async function login(payload) {
     throw error;
   }
 
-  const customersData = await listCustomers();
-  const customers = Array.isArray(customersData.customers)
-    ? customersData.customers
-    : [];
+  const existingClientResult = await pool.query(
+    `
+      SELECT id, client_id, company_name, zero_touch_customer_name, is_active
+      FROM clients
+      WHERE client_id = $1
+      LIMIT 1
+    `,
+    [normalizedClientId]
+  );
+  const existingClient = existingClientResult.rows[0] || null;
+
+  let customers = [];
+  try {
+    const customersData = await listCustomers();
+    customers = Array.isArray(customersData.customers) ? customersData.customers : [];
+  } catch (error) {
+    customers = [];
+  }
+
   const matchedCustomer = customers.find(
     (item) => String(item.companyId || '') === normalizedClientId
   );
 
-  if (!matchedCustomer) {
-    const error = new Error('Client ID no existe en Zero Touch.');
+  const configuredSamsungCustomerIds = Array.isArray(
+    config.samsungKnoxAllowedCustomerIds
+  )
+    ? config.samsungKnoxAllowedCustomerIds
+    : [];
+
+  const isConfiguredSamsungCustomer = configuredSamsungCustomerIds.includes(
+    normalizedClientId
+  );
+
+  let samsungCustomerId = null;
+  if (isSamsungConfigured()) {
+    samsungCustomerId = await detectSamsungCustomerById(normalizedClientId);
+  }
+  if (!samsungCustomerId && isConfiguredSamsungCustomer) {
+    samsungCustomerId = normalizedClientId;
+  }
+
+  const hasZeroTouch = Boolean(
+    matchedCustomer?.name || existingClient?.zero_touch_customer_name
+  );
+  const hasSamsung = Boolean(samsungCustomerId);
+
+  if (hasSamsung) {
+    if (!normalizedEmail) {
+      const error = new Error('Para Samsung Knox debes ingresar correo.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const allowedEmails = new Set(
+      [
+        ...(config.samsungKnoxAllowedLoginEmails || []),
+        config.samsungKnoxResellerEmail,
+      ]
+        .map((item) => String(item || '').trim().toLowerCase())
+        .filter(Boolean)
+    );
+
+    if (allowedEmails.size > 0 && !allowedEmails.has(normalizedEmail)) {
+      const error = new Error('Correo no autorizado para Samsung Knox en este Client ID.');
+      error.statusCode = 401;
+      throw error;
+    }
+  }
+
+  if (!hasZeroTouch && !hasSamsung) {
+    const error = new Error('Client ID no existe en Zero Touch ni Samsung Knox.');
     error.statusCode = 401;
     throw error;
   }
 
-  const zeroTouchCustomerName = String(
-    matchedCustomer.name || `customers/${normalizedClientId}`
+  const zeroTouchCustomerName = matchedCustomer?.name
+    ? String(matchedCustomer.name)
+    : existingClient?.zero_touch_customer_name || null;
+  const companyName = String(
+    matchedCustomer?.companyName || existingClient?.company_name || 'Cliente Intechsys'
   );
-  const companyName = String(matchedCustomer.companyName || 'Cliente Zero Touch');
 
   await pool.query(
     `
@@ -56,7 +124,7 @@ async function login(payload) {
       ON CONFLICT (client_id)
       DO UPDATE SET
         company_name = EXCLUDED.company_name,
-        zero_touch_customer_name = EXCLUDED.zero_touch_customer_name,
+        zero_touch_customer_name = COALESCE(EXCLUDED.zero_touch_customer_name, clients.zero_touch_customer_name),
         is_active = TRUE
     `,
     [normalizedClientId, companyName, zeroTouchCustomerName]
@@ -154,9 +222,11 @@ async function login(payload) {
 
   const tokenPayload = {
     sub: String(row.user_id),
-    email: row.email,
     clientId: row.client_id,
     clientDbId: row.client_db_id,
+    zeroTouchAvailable: hasZeroTouch,
+    samsungAvailable: hasSamsung,
+    samsungCustomerId: samsungCustomerId || null,
   };
 
   const accessToken = jwt.sign(tokenPayload, config.jwtSecret, {
@@ -167,7 +237,13 @@ async function login(payload) {
     userId: row.user_id,
     clientDbId: row.client_db_id,
     action: 'auth.login.success',
-    payload: { email: row.email, clientId: row.client_id },
+    payload: {
+      clientId: row.client_id,
+      email: normalizedEmail || null,
+      zeroTouchAvailable: hasZeroTouch,
+      samsungAvailable: hasSamsung,
+      samsungCustomerId: samsungCustomerId || null,
+    },
   });
 
   const dbZeroTouchCustomerName = row.zero_touch_customer_name || null;
@@ -175,24 +251,24 @@ async function login(payload) {
     ? String(dbZeroTouchCustomerName).split('/').pop()
     : null;
 
-  if (!zeroTouchCustomerId) {
-    const error = new Error('Cliente sin customerId de Zero Touch configurado.');
-    error.statusCode = 400;
-    throw error;
+  if (zeroTouchCustomerId) {
+    await syncClientDevices({
+      clientDbId: Number(row.client_db_id),
+      customerId: zeroTouchCustomerId,
+    });
   }
-
-  await syncClientDevices({
-    clientDbId: Number(row.client_db_id),
-    customerId: zeroTouchCustomerId,
-  });
 
   return {
     accessToken,
     companyName: row.company_name,
-    email: row.email,
+    email: normalizedEmail || null,
     clientId: row.client_id,
+    zeroTouchAvailable: hasZeroTouch,
     zeroTouchCustomerName: dbZeroTouchCustomerName,
     zeroTouchCustomerId,
+    samsungAvailable: hasSamsung,
+    samsungCustomerId: samsungCustomerId || null,
+    preferredEnrollment: hasZeroTouch ? 'zerotouch' : 'samsung',
   };
 }
 

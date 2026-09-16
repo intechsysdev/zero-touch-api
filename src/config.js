@@ -17,6 +17,16 @@ function parseCorsOrigins(value) {
     .filter(Boolean);
 }
 
+function parseCsv(value) {
+  if (!value || !value.trim()) {
+    return [];
+  }
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: Number(process.env.PORT || 8080),
@@ -33,6 +43,28 @@ const config = {
   googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '',
   googleApplicationCredentials: process.env.GOOGLE_APPLICATION_CREDENTIALS || '',
   demoZeroTouchCustomerId: process.env.DEMO_ZERO_TOUCH_CUSTOMER_ID || '1791589702',
+  samsungKnoxEnabled: parseBoolean(process.env.SAMSUNG_KNOX_ENABLED, false),
+  samsungKnoxBaseUrl:
+    process.env.SAMSUNG_KNOX_BASE_URL || 'https://us-kcs-api.samsungknox.com',
+  samsungKnoxOAuthTokenUrl:
+    process.env.SAMSUNG_KNOX_OAUTH_TOKEN_URL ||
+    'https://api.samsungknox.com/ams/v1/oauth2/token',
+  samsungKnoxAuthMode: process.env.SAMSUNG_KNOX_AUTH_MODE || 'auto',
+  samsungKnoxOAuthScope: process.env.SAMSUNG_KNOX_OAUTH_SCOPE || '',
+  samsungKnoxApiToken: process.env.SAMSUNG_KNOX_API_TOKEN || '',
+  samsungKnoxClientId: process.env.SAMSUNG_KNOX_CLIENT_ID || '',
+  samsungKnoxClientSecret: process.env.SAMSUNG_KNOX_CLIENT_SECRET || '',
+  samsungKnoxAccessToken: process.env.SAMSUNG_KNOX_ACCESS_TOKEN || '',
+  samsungKnoxClientIdentifier: process.env.SAMSUNG_KNOX_CLIENT_IDENTIFIER || '',
+  samsungKnoxKeysJson: process.env.SAMSUNG_KNOX_KEYS_JSON || '',
+  samsungKnoxKeysPath: process.env.SAMSUNG_KNOX_KEYS_PATH || '',
+  samsungKnoxResellerEmail: process.env.SAMSUNG_KNOX_RESELLER_EMAIL || '',
+  samsungKnoxAllowedLoginEmails: parseCsv(
+    process.env.SAMSUNG_KNOX_ALLOWED_LOGIN_EMAILS || ''
+  ),
+  samsungKnoxAllowedCustomerIds: parseCsv(
+    process.env.SAMSUNG_KNOX_ALLOWED_CUSTOMER_IDS || ''
+  ),
 };
 
 if (config.nodeEnv === 'production') {

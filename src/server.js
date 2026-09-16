@@ -7,6 +7,7 @@ const { initDatabase, checkDatabaseConnection } = require('./db');
 const { login } = require('./auth.service');
 const { requireAuth } = require('./middleware/auth.middleware');
 const { zeroTouchRouter } = require('./zerotouch/zerotouch.routes');
+const { samsungRouter } = require('./samsung/samsung.routes');
 
 const app = express();
 
@@ -70,6 +71,7 @@ app.post('/auth/login', async (req, res, next) => {
 });
 
 app.use('/zerotouch', requireAuth, zeroTouchRouter);
+app.use('/samsung', requireAuth, samsungRouter);
 
 app.use((error, req, res, next) => {
   if (error.message === 'CORS origin is not allowed.') {

@@ -21,6 +21,7 @@
     "google-auth-library": "^9.15.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
+    "knox-token-library-js": "^1.0.22",
     "pg": "^8.16.3",
     "zod": "^3.25.76"
   }
