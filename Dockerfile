@@ -5,7 +5,8 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY src ./src
-COPY .env.docker ./.env
+# NOTE: Do NOT copy .env files into the image. Pass env vars dynamically
+# via docker-compose, Azure Container Apps, or --env-file at runtime.
 
 EXPOSE 8080
 

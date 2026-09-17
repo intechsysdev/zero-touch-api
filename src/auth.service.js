@@ -29,6 +29,8 @@ async function login(payload) {
   const normalizedClientId = clientId.trim();
   const normalizedEmail = String(email || '').trim().toLowerCase();
 
+  console.log(`[AUTH] Intento de login para clientId: "${normalizedClientId}", email: "${normalizedEmail || '(sin correo)'}"`);
+
   if (password !== normalizedClientId) {
     const error = new Error('Para este MVP, password debe ser igual al clientId.');
     error.statusCode = 401;
@@ -79,15 +81,23 @@ async function login(payload) {
   const hasZeroTouch = Boolean(
     matchedCustomer?.name || existingClient?.zero_touch_customer_name
   );
-  const hasSamsung = Boolean(samsungCustomerId);
+  let hasSamsung = Boolean(samsungCustomerId);
 
-  if (hasSamsung) {
-    if (!normalizedEmail) {
+  // Si tiene Samsung pero NO ingresó correo:
+  // - Si también tiene Zero Touch, entra solo con Zero Touch (el correo no es obligatorio)
+  // - Si SOLO tiene Samsung, entonces sí debe ingresar correo
+  if (hasSamsung && !normalizedEmail) {
+    if (hasZeroTouch) {
+      hasSamsung = false;
+      samsungCustomerId = null;
+    } else {
       const error = new Error('Para Samsung Knox debes ingresar correo.');
       error.statusCode = 400;
       throw error;
     }
+  }
 
+  if (hasSamsung && normalizedEmail) {
     const allowedEmails = new Set(
       [
         ...(config.samsungKnoxAllowedLoginEmails || []),
@@ -147,7 +157,8 @@ async function login(payload) {
     throw error;
   }
 
-  const systemEmail = `client-${normalizedClientId}@intechsys.local`;
+  // Si el usuario proporcionó correo, usarlo; de lo contrario generar correo sintético
+  const systemEmail = normalizedEmail || `client-${normalizedClientId}@intechsys.local`;
   const passwordHash = bcrypt.hashSync(normalizedClientId, 10);
 
   await pool.query(
@@ -199,11 +210,11 @@ async function login(payload) {
       FROM users u
       INNER JOIN user_clients uc ON uc.user_id = u.id
       INNER JOIN clients c ON c.id = uc.client_id
-      WHERE u.email = $1 AND c.client_id = $2
+      WHERE u.id = $1 AND c.id = $2
       ORDER BY u.id ASC
       LIMIT 1
     `,
-    [systemEmail, normalizedClientId]
+    [user.id, client.id]
   );
 
   const row = result.rows[0] || null;
