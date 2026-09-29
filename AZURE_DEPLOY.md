@@ -37,7 +37,6 @@ Optional env vars:
 Run:
 
 ```bash
-cd backend_intechsys
 ./deploy/azure/deploy.sh
 ```
 

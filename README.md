@@ -1,145 +1,102 @@
-# Backend Intechsys (Node.js)
+# Zero-touch API & Deployment (Intechsys)
 
-Backend para autenticar clientes con email + password + clientId, emitir JWT y actuar como puente hacia Google Zero-touch.
+Node.js + Express backend providing multi-tenant authentication, device provisioning, and management bridging Google Android Zero-touch Provisioning and Samsung Knox Cloud Services.
 
-## Dónde crear esto
+## Tech Stack
 
-Se crea en una carpeta separada del front:
+- **Node.js** + **Express**
+- **PostgreSQL** (Azure Database for PostgreSQL Flexible Server or local container)
+- **JWT** (JSON Web Tokens)
+- **Google Auth Library** (`googleapis`)
+- **Samsung Knox Cloud Services API**
+- **Docker** & **Azure Container Apps**
 
-- backend_intechsys
-- zerotouch_intechsys
+## Repository Structure
 
-Asi puedes desplegar backend y app de forma independiente.
+```
+├── deploy/azure/deploy.sh      # Azure deployment script (ACR, PostgreSQL, Container Apps)
+├── scripts/                    # Admin CLI tools (create client, list devices, onboard client)
+├── secrets/README.md           # Instructions for service account keys
+├── src/
+│   ├── auth.service.js         # Authentication & JWT issuance
+│   ├── config.js               # Centralized configuration & environment loader
+│   ├── db.js                   # PostgreSQL schema & connection pool
+│   ├── middleware/             # Auth & rate-limiting middleware
+│   ├── samsung/                # Samsung Knox client & routes
+│   ├── server.js               # Express application entrypoint
+│   └── zerotouch/              # Google Zero-touch client, routes & synchronization
+├── Dockerfile                  # Production container image definition
+├── docker-compose.yml          # Local PostgreSQL + API orchestration
+└── AZURE_DEPLOY.md             # Complete step-by-step Azure deployment guide
+```
 
-## Stack
+## Environment Configuration
 
-- Node.js + Express
-- PostgreSQL
-- JWT
-- Google Auth Library
+Copy the template to create your `.env` file:
 
-## Configuracion
+```bash
+cp .env.example .env
+```
 
-1. Usa .env para local.
-2. Usa .env.production para despliegues empresariales.
-3. Usa .env.docker para stack completo en Docker.
+Key variables:
 
-Variables:
+| Variable | Description |
+|---|---|
+| `PORT` | Server listening port (default: `8080`) |
+| `NODE_ENV` | `development` or `production` |
+| `JWT_SECRET` | Secret key for signing tokens |
+| `DB_URL` | PostgreSQL connection string |
+| `ZERO_TOUCH_PARTNER_ID` | Google Zero-touch Partner ID |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Google service account JSON string or secret |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google service account credentials file |
+| `CORS_ORIGIN` | Allowed CORS origins (`*` or comma-separated domains) |
 
-- NODE_ENV
-- PORT
-- JWT_SECRET
-- JWT_EXPIRES_IN
-- DB_URL
-- ZERO_TOUCH_BASE_URL
-- ZERO_TOUCH_PARTNER_ID
-- CORS_ORIGIN
-- TRUST_PROXY
-- GOOGLE_SERVICE_ACCOUNT_JSON (opcional)
-- GOOGLE_APPLICATION_CREDENTIALS (opcional)
+## Local Development
 
-## Levantar PostgreSQL local
+### 1. Start PostgreSQL with Docker
 
-1. docker compose up -d
+```bash
+docker compose up -d postgres
+```
 
-Esto inicia backend + postgres en contenedores.
+### 2. Install dependencies & run
 
-## Ejecutar
+```bash
+npm install
+npm run start
+```
 
-1. npm install
-2. npm run start
+API will be running on `http://localhost:8080`.
 
-Servidor:
+### Health Check
 
-- http://localhost:8080
+- `GET /health`: Basic service liveness
+- `GET /ready`: Readiness check (verifies database connectivity)
 
-Health:
+## Endpoints Overview
 
-- GET /health
-- GET /ready
+### Authentication
+- `POST /auth/login`
+  - Body: `{ "email": "...", "clientId": "CLI-1001", "password": "..." }`
+  - Returns JWT access token, company name, customer IDs, and available platforms.
 
-## Endpoint de login
+### Android Zero-touch (requires `Authorization: Bearer <token>`)
+- `GET /zerotouch/customers`: List accessible customers
+- `GET /zerotouch/devices?customerId=...`: List provisioned devices
+- `GET /zerotouch/devices/identifier-options`: List available manufacturers and models
+- `POST /zerotouch/devices/claim`: Claim single device
+- `POST /zerotouch/devices/claim/bulk`: Bulk claim devices
+- `POST /zerotouch/devices/unclaim`: Unclaim device
 
-POST /auth/login
+### Samsung Knox (requires `Authorization: Bearer <token>`)
+- `GET /samsung/devices`: List Knox devices
+- `POST /samsung/devices/claim/bulk`: Bulk upload/claim Samsung devices
+- `POST /samsung/devices/unclaim`: Unclaim Samsung device
 
-Body JSON:
+## Azure Production Deployment
 
-{
-  "email": "cliente.demo@intechsys.com",
-  "password": "CLI-1001",
-  "clientId": "CLI-1001"
-}
+To deploy the entire stack to Azure (Container Registry, Flexible Server PostgreSQL, and Container Apps), follow [AZURE_DEPLOY.md](AZURE_DEPLOY.md) or run:
 
-## Regla solicitada por ustedes
-
-En este MVP, el password debe ser igual al clientId.
-
-## Endpoints Zero-touch (siempre via backend)
-
-Todos requieren header Authorization: Bearer <accessToken>
-
-- GET /zerotouch/customers
-- GET /zerotouch/devices?customerId=123456789&pageSize=20&pageToken=
-- POST /zerotouch/devices/claim
-- POST /zerotouch/devices/unclaim
-
-## Credencial de servicio en Docker
-
-1. Copia tu archivo JSON real de service account a:
-  backend_intechsys/secrets/google-service-account.json
-2. docker-compose ya lo monta en:
-  /app/secrets/google-service-account.json
-3. .env.docker ya referencia:
-  GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/google-service-account.json
-
-Si no montas este archivo, los endpoints /zerotouch/* devolveran error de credenciales.
-
-Ejemplo POST /zerotouch/configurations
-
-{
-  "customerName": "customers/123456789",
-  "payload": {
-    "configurationName": "perfil-default",
-    "dpcResourcePath": "customers/123456789/dpcs/123456",
-    "dpcExtras": "{\"android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION\":\"https://...\"}"
-  }
-}
-
-## Respuesta esperada por Flutter
-
-{
-  "accessToken": "...",
-  "companyName": "Cliente Demo Intechsys",
-  "email": "cliente.demo@intechsys.com",
-  "clientId": "CLI-1001",
-  "zeroTouchCustomerName": "customers/123456789"
-}
-
-## Datos seed iniciales
-
-Se crean automaticamente al iniciar por primera vez:
-
-- email: cliente.demo@intechsys.com
-- clientId: CLI-1001
-- password: CLI-1001
-
-## Flujo recomendado para Flutter
-
-1. Flutter hace login a POST /auth/login.
-2. Backend devuelve JWT.
-3. Flutter usa JWT para llamar endpoints /zerotouch/* del backend.
-4. Solo backend llama Google Zero-touch API.
-
-## Despliegue empresarial
-
-1. Imagen Docker: Dockerfile
-2. Orquestacion local/entorno controlado: docker-compose.yml
-3. Guia Azure: AZURE_DEPLOY.md
-
-La app Flutter solo debe apuntar al backend publico y nunca a Google Zero-touch.
-
-## Siguiente paso recomendado
-
-1. Agregar refresh token rotativo.
-2. Agregar RBAC por cliente y rol.
-3. Persistir cache de dispositivos y jobs de sincronizacion.
+```bash
+./deploy/azure/deploy.sh
+```
