@@ -43,6 +43,11 @@ const config = {
   googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '',
   googleApplicationCredentials: process.env.GOOGLE_APPLICATION_CREDENTIALS || '',
   demoZeroTouchCustomerId: process.env.DEMO_ZERO_TOUCH_CUSTOMER_ID || '1791589702',
+  oneBaseUrl:
+    process.env.ONE_BASE_URL ||
+    'https://intechsys-one-api-b5b5a6cbf9emevev.centralus-01.azurewebsites.net',
+  oneAppSlug: process.env.ONE_APP_SLUG || 'zero-touch',
+  oneTimeoutMs: Number(process.env.ONE_TIMEOUT_MS || 15000),
   samsungKnoxEnabled: parseBoolean(process.env.SAMSUNG_KNOX_ENABLED, false),
   samsungKnoxBaseUrl:
     process.env.SAMSUNG_KNOX_BASE_URL || 'https://us-kcs-api.samsungknox.com',
@@ -76,6 +81,9 @@ if (config.nodeEnv === 'production') {
   }
   if (!process.env.ZERO_TOUCH_PARTNER_ID) {
     throw new Error('ZERO_TOUCH_PARTNER_ID must be set in production.');
+  }
+  if (!config.oneBaseUrl) {
+    throw new Error("Falta 'ONE_BASE_URL'. Sin One no hay forma de autenticar usuarios en producción.");
   }
 }
 

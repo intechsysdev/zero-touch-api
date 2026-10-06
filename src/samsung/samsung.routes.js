@@ -6,6 +6,7 @@ const {
   deleteSamsungDevices,
 } = require('./samsung.client');
 const { writeAuditLog } = require('../db');
+const { devicesLimiter } = require('../middleware');
 
 const router = express.Router();
 
@@ -54,7 +55,7 @@ router.get('/devices', async (req, res, next) => {
   }
 });
 
-router.post('/devices/claim/bulk', async (req, res, next) => {
+router.post('/devices/claim/bulk', devicesLimiter, async (req, res, next) => {
   try {
     const bodySchema = z.object({
       customerId: z.string().optional(),
@@ -118,7 +119,7 @@ router.post('/devices/claim/bulk', async (req, res, next) => {
   }
 });
 
-router.post('/devices/unclaim', async (req, res, next) => {
+router.post('/devices/unclaim', devicesLimiter, async (req, res, next) => {
   try {
     const bodySchema = z.object({
       deviceIds: z.array(z.string()).optional(),

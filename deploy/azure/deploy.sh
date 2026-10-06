@@ -17,6 +17,8 @@ IMAGE_NAME=${IMAGE_NAME:-intechsys-backend}
 IMAGE_TAG=${IMAGE_TAG:-v1}
 PG_DB_NAME=${PG_DB_NAME:-intechsys_zt}
 CORS_ORIGIN=${CORS_ORIGIN:-*}
+ONE_BASE_URL=${ONE_BASE_URL:-https://intechsys-one-api-b5b5a6cbf9emevev.centralus-01.azurewebsites.net}
+ONE_APP_SLUG=${ONE_APP_SLUG:-zero-touch}
 
 az group create -n "$RESOURCE_GROUP" -l "$LOCATION" >/dev/null
 
@@ -74,6 +76,8 @@ if ! az containerapp show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP_NAME" >/dev/nu
       JWT_EXPIRES_IN=8h \
       ZERO_TOUCH_BASE_URL=https://androiddeviceprovisioning.googleapis.com/v1 \
       ZERO_TOUCH_PARTNER_ID="$ZERO_TOUCH_PARTNER_ID" \
+      ONE_BASE_URL="$ONE_BASE_URL" \
+      ONE_APP_SLUG="$ONE_APP_SLUG" \
       CORS_ORIGIN="$CORS_ORIGIN" \
       TRUST_PROXY=true \
       JWT_SECRET=secretref:jwt-secret \
@@ -90,6 +94,8 @@ else
       JWT_EXPIRES_IN=8h \
       ZERO_TOUCH_BASE_URL=https://androiddeviceprovisioning.googleapis.com/v1 \
       ZERO_TOUCH_PARTNER_ID="$ZERO_TOUCH_PARTNER_ID" \
+      ONE_BASE_URL="$ONE_BASE_URL" \
+      ONE_APP_SLUG="$ONE_APP_SLUG" \
       CORS_ORIGIN="$CORS_ORIGIN" \
       TRUST_PROXY=true >/dev/null
 

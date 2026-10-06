@@ -6,8 +6,10 @@ const {
   claimDevice,
   unclaimDevice,
 } = require('./zerotouch.client');
-const { writeAuditLog, getClientByDbId, listClientDevices } = require('../db');
+const { pool, writeAuditLog, getClientByDbId, listClientDevices } = require('../db');
 const { syncClientDevices } = require('./zerotouch.sync');
+const { devicesLimiter } = require('../middleware');
+const { getCompanyDynamicConfig } = require('../one');
 
 const router = express.Router();
 
@@ -66,11 +68,70 @@ async function resolveCustomerIdFromAuth(req) {
     throw error;
   }
 
-  const customerName = client.zero_touch_customer_name || '';
+  // 1. Si ya tiene zero_touch_customer_name en la BD local
+  let customerName = client.zero_touch_customer_name || '';
+
+  // 2. Si no lo tiene, consultar la configuración dinámica de One (Settings)
+  if (!customerName) {
+    try {
+      const dynamicConfig = await getCompanyDynamicConfig(client.id);
+      if (dynamicConfig?.zeroTouchCustomerName) {
+        customerName = dynamicConfig.zeroTouchCustomerName;
+        await pool.query(
+          'UPDATE clients SET zero_touch_customer_name = $1 WHERE id = $2',
+          [customerName, client.id]
+        ).catch(() => {});
+      }
+    } catch (configError) {
+      console.warn('No se pudo obtener config de One:', configError.message);
+    }
+  }
+
+  // 3. Si aún no lo tiene, intentar auto-vincular buscando en los clientes de Google Zero Touch
+  if (!customerName) {
+    try {
+      const customersData = await listCustomers();
+      const googleCustomers = Array.isArray(customersData.customers) ? customersData.customers : [];
+
+      const targetName = String(client.company_name || '').toLowerCase().trim();
+      const targetSlug = String(client.one_slug || client.client_id || '').toLowerCase().trim();
+
+      const matched = googleCustomers.find((c) => {
+        const cName = String(c.companyName || '').toLowerCase().trim();
+        const cId = String(c.companyId || '').toLowerCase().trim();
+        return (
+          cId === targetSlug ||
+          cName === targetName ||
+          cName.includes(targetName) ||
+          targetName.includes(cName)
+        );
+      });
+
+      if (matched && matched.name) {
+        customerName = matched.name;
+        await pool.query(
+          'UPDATE clients SET zero_touch_customer_name = $1 WHERE id = $2',
+          [customerName, client.id]
+        ).catch(() => {});
+        console.log(`[Auto-link] Empresa "${client.company_name}" vinculada automáticamente a Google ZeroTouch: ${customerName}`);
+      }
+    } catch (googleError) {
+      console.warn('Auto-búsqueda en Google Zero Touch falló:', googleError.message);
+    }
+  }
+
+  // 4. Si fue enviado explícitamente en el query
+  if (!customerName && req.query?.customerId) {
+    const candidateId = String(req.query.customerId).trim();
+    if (candidateId) {
+      customerName = `customers/${candidateId}`;
+    }
+  }
+
   const customerId = String(customerName).split('/').pop();
   if (!customerId) {
     const error = new Error(
-      'Cliente sin zero_touch_customer_name configurado. Contacta al administrador.'
+      `La empresa "${client.company_name}" no tiene un Customer ID de Zero Touch asignado. Puedes configurarlo en One (ZERO_TOUCH_CUSTOMER_ID) o seleccionarlo en la consola.`
     );
     error.statusCode = 400;
     throw error;
@@ -78,6 +139,49 @@ async function resolveCustomerIdFromAuth(req) {
 
   return customerId;
 }
+
+/**
+ * Endpoint para vincular o actualizar el Zero Touch Customer ID de una empresa
+ * PUT /zerotouch/customers/link
+ * Body: { customerId: "1791589702" } o { customerName: "customers/1791589702" }
+ */
+router.put('/customers/link', async (req, res, next) => {
+  try {
+    const schema = z.object({
+      customerId: z.union([z.string(), z.number()]),
+    });
+    const body = schema.parse(req.body);
+    const rawId = String(body.customerId).trim().split('/').pop();
+    const customerName = `customers/${rawId}`;
+    const clientDbId = Number(req.auth.clientDbId);
+
+    await pool.query(
+      'UPDATE clients SET zero_touch_customer_name = $1 WHERE id = $2',
+      [customerName, clientDbId]
+    );
+
+    await writeAuditLog({
+      userId: Number(req.auth.sub),
+      clientDbId,
+      action: 'zerotouch.customers.link',
+      payload: { zeroTouchCustomerName: customerName, rawId },
+    });
+
+    res.json({
+      ok: true,
+      clientDbId,
+      customerId: rawId,
+      zeroTouchCustomerName: customerName,
+      message: `Empresa vinculada exitosamente con Customer ID ${rawId}`,
+    });
+  } catch (error) {
+    if (error.name === 'ZodError') {
+      error.statusCode = 400;
+      error.message = error.issues.map((item) => item.message).join(', ');
+    }
+    next(error);
+  }
+});
 
 router.get('/customers', async (req, res, next) => {
   try {
@@ -271,7 +375,7 @@ router.get('/devices/identifier-options', async (req, res, next) => {
   }
 });
 
-router.post('/devices/claim', async (req, res, next) => {
+router.post('/devices/claim', devicesLimiter, async (req, res, next) => {
   try {
     const schema = z.object({
       customerId: z.string().optional(),
@@ -333,7 +437,7 @@ router.post('/devices/claim', async (req, res, next) => {
   }
 });
 
-router.post('/devices/claim/bulk', async (req, res, next) => {
+router.post('/devices/claim/bulk', devicesLimiter, async (req, res, next) => {
   try {
     const schema = z.object({
       customerId: z.string().optional(),
@@ -468,7 +572,7 @@ router.post('/devices/claim/bulk', async (req, res, next) => {
   }
 });
 
-router.post('/devices/unclaim', async (req, res, next) => {
+router.post('/devices/unclaim', devicesLimiter, async (req, res, next) => {
   try {
     const schema = z.object({
       deviceIdentifier: z.object({
