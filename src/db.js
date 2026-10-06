@@ -112,9 +112,11 @@ async function seedInitialData() {
 
 async function writeAuditLog({ userId = null, clientDbId = null, action, payload = {} }) {
   try {
+    const safeUserId = Number.isInteger(Number(userId)) && !isNaN(Number(userId)) ? Number(userId) : null;
+    const safeClientDbId = Number.isInteger(Number(clientDbId)) && !isNaN(Number(clientDbId)) ? Number(clientDbId) : null;
     await pool.query(
       'INSERT INTO audit_logs (user_id, client_id, action, payload_json) VALUES ($1, $2, $3, $4::jsonb)',
-      [userId, clientDbId, action, JSON.stringify(payload)]
+      [safeUserId, safeClientDbId, action, JSON.stringify(payload)]
     );
   } catch (error) {
     // Do not block main request flow if audit insert fails.
