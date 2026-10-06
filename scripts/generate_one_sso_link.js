@@ -9,8 +9,12 @@
 const { oneConfig } = require('../src/one');
 
 async function main() {
-  const email = process.argv[2] || 'ncepeda@intechsyscol.com';
-  const password = process.argv[3] || '_*E7eaB9m5w';
+  const email = process.argv[2];
+  const password = process.argv[3];
+  if (!password) {
+    console.error('Uso: node scripts/generate_one_sso_link.js <correo> <contraseña>');
+    process.exit(1);
+  }
 
   console.log('Iniciando sesión en One con:', email);
 

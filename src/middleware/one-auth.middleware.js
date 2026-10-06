@@ -1,5 +1,3 @@
-const jwt = require('jsonwebtoken');
-const { config } = require('../config');
 const { verifyUserToken } = require('../one');
 
 /**
@@ -11,8 +9,10 @@ const { verifyUserToken } = require('../one');
  * 2. Consulta a One (GET api/v1/auth/me) con caché de 1 minuto (por sha256 de token)
  * 3. NO valida firmas JWT localmente para evitar exponer secretos en este repositorio.
  * 4. Construye req.user y req.auth con claims estándar y memberships.
- * 5. Soporte híbrido: si falla One, verifica si es un token local emitido previamente
- *    para mantener retrocompatibilidad durante la transición.
+ *
+ * Solo hay sesiones de One: el antiguo login local (contraseña igual al Client ID) dejaba entrar
+ * a cualquiera que conociera un Client ID. Ahora el Client ID solo dice a qué empresa se entra;
+ * quién entra lo decide One.
  */
 async function requireAuth(req, res, next) {
   const authorization = req.headers.authorization || '';
@@ -64,25 +64,13 @@ async function requireAuth(req, res, next) {
       });
     }
 
-    // Si One no lo validó o no está disponible, intentar fallback local si existe secret
-    if (config.jwtSecret) {
-      try {
-        const payload = jwt.verify(token, config.jwtSecret);
-        req.auth = {
-          ...payload,
-          authType: 'local',
-        };
-        return next();
-      } catch (localJwtError) {
-        // Falló tanto One como el token local
-      }
-    }
-
     return res.status(401).json({
       message: 'Token de acceso no válido o expirado.',
       details: oneError.message,
     });
   }
+
+  return res.status(401).json({ message: 'Token de acceso no válido o expirado.' });
 }
 
 module.exports = {

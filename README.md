@@ -18,10 +18,12 @@ Node.js + Express backend providing multi-tenant authentication, device provisio
 ├── scripts/                    # Admin CLI tools (create client, list devices, onboard client)
 ├── secrets/README.md           # Instructions for service account keys
 ├── src/
-│   ├── auth.service.js         # Authentication & JWT issuance
+│   ├── plataformas.js          # Client ID → Zero-touch / Knox customer detection
 │   ├── config.js               # Centralized configuration & environment loader
 │   ├── db.js                   # PostgreSQL schema & connection pool
-│   ├── middleware/             # Auth & rate-limiting middleware
+│   ├── middleware/             # One auth, tenant resolution & rate-limiting
+│   ├── one/                    # Intechsys One client (auth/me, tenants, config)
+│   ├── session/                # /api/v1/sesion and the SSO proxy (/api/v1/sso)
 │   ├── samsung/                # Samsung Knox client & routes
 │   ├── server.js               # Express application entrypoint
 │   └── zerotouch/              # Google Zero-touch client, routes & synchronization
@@ -75,13 +77,27 @@ API will be running on `http://localhost:8080`.
 
 ## Endpoints Overview
 
-### Authentication
-- `POST /auth/login`
-  - Body: `{ "email": "...", "clientId": "CLI-1001", "password": "..." }`
-  - Returns JWT access token, company name, customer IDs, and available platforms.
+### Authentication (Intechsys One)
+
+Users sign in through Intechsys One; there is no local login (`POST /auth/login` answers 410).
+
+1. The console asks for the customer's **Client ID** and sends the user to One's `/autorizar`
+   with `client_id=zero-touch` and `tenant_hint=<Client ID>` (OAuth code + PKCE).
+2. One authenticates the user and picks the company whose zero-touch variable marked
+   *"Identifica a la empresa al iniciar sesión"* (e.g. `RESELLER_PARTNER_ID`, "Partner ID de
+   Reseller") has that value. The user must be a member of that company.
+3. The console exchanges the code through this API (`POST /api/v1/sso/token`, forwarded to One)
+   and calls the API with `Authorization: Bearer <One token>` and `X-Tenant-Id`.
+
+- `POST /api/v1/sso/token` / `POST /api/v1/sso/logout`: forwarded to One server-to-server.
+- `GET /api/v1/sesion`: user, companies (with their Client ID) and the active company with
+  `clientId`, `zeroTouchAvailable`, `zeroTouchCustomerId`, `samsungAvailable`, `samsungCustomerId`.
+
+The Client ID must match exactly the customer's `companyId` in Zero-touch (or its Knox customer
+ID). If a customer's Zero-touch ID differs, set `ZERO_TOUCH_CUSTOMER_ID` for the company in One.
 
 ### Android Zero-touch (requires `Authorization: Bearer <token>`)
-- `GET /zerotouch/customers`: List accessible customers
+- `GET /zerotouch/customers`: List the reseller's customers (platform admins only)
 - `GET /zerotouch/devices?customerId=...`: List provisioned devices
 - `GET /zerotouch/devices/identifier-options`: List available manufacturers and models
 - `POST /zerotouch/devices/claim`: Claim single device

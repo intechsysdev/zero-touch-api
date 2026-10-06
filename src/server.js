@@ -3,14 +3,15 @@ const cors = require('cors');
 const helmet = require('helmet');
 const { config } = require('./config');
 const { initDatabase, checkDatabaseConnection } = require('./db');
-const { login } = require('./auth.service');
 const {
   requireAuth,
   resolveTenant,
+  requireTenant,
   generalLimiter,
   authLimiter,
 } = require('./middleware');
 const { sessionRouter } = require('./session/session.routes');
+const { ssoRouter } = require('./session/sso.routes');
 const { zeroTouchRouter } = require('./zerotouch/zerotouch.routes');
 const { samsungRouter } = require('./samsung/samsung.routes');
 
@@ -80,15 +81,17 @@ app.get('/ready', async (req, res) => {
 // AUTENTICACIÓN Y SESIÓN
 // ══════════════════════════════════════════════
 
-// Login clásico (MVP legacy) protegido con authLimiter
-app.post('/auth/login', authLimiter, async (req, res, next) => {
-  try {
-    const response = await login(req.body);
-    res.json(response);
-  } catch (error) {
-    next(error);
-  }
+// El login local (contraseña igual al Client ID) dejaba entrar a cualquiera que conociera un
+// Client ID. Ahora se entra con One: la consola manda el Client ID a One como tenant_hint y One
+// autentica al usuario y elige la empresa. Se responde 410 para que una consola vieja lo explique.
+app.post('/auth/login', authLimiter, (req, res) => {
+  res.status(410).json({
+    message: 'El ingreso con Client ID ahora se hace con Intechsys One. Recargue la página.',
+  });
 });
+
+// Canje del código de One y cierre de sesión, reenviados a One de servidor a servidor
+app.use('/api/v1/sso', authLimiter, ssoRouter);
 
 // Endpoint de sesión para la consola SPA (/api/v1/sesion y alias /api/v1/session)
 app.use(
@@ -102,8 +105,8 @@ app.use(
 // ══════════════════════════════════════════════
 // RUTAS DE NEGOCIO (Zero Touch y Samsung Knox)
 // ══════════════════════════════════════════════
-app.use('/zerotouch', requireAuth, resolveTenant, zeroTouchRouter);
-app.use('/samsung', requireAuth, resolveTenant, samsungRouter);
+app.use('/zerotouch', requireAuth, resolveTenant, requireTenant, zeroTouchRouter);
+app.use('/samsung', requireAuth, resolveTenant, requireTenant, samsungRouter);
 
 // ══════════════════════════════════════════════
 // MANEJO GLOBAL DE ERRORES

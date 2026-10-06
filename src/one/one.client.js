@@ -56,7 +56,7 @@ async function callOne(path, options = {}) {
  * Endpoint 1: Validación de Sesión de Usuario (Consola SPA)
  * GET api/v1/auth/me
  * Cabecera: Authorization: Bearer <jwt_del_usuario>
- * Caché en memoria durante 1 minuto (TTL: 60s) bajo one:me:<sha256(token)>.
+ * Caché en memoria durante 15 s (un cierre de sesión en One se nota pronto) bajo one:me:<sha256(token)>.
  */
 async function verifyUserToken(token) {
   if (!token) {
@@ -77,8 +77,8 @@ async function verifyUserToken(token) {
     },
   });
 
-  // Guardar en caché por 1 minuto (60.000 ms)
-  cache.set(cacheKey, userData, 60 * 1000);
+  // 15 s: con el cierre de sesión único de One, un token revocado deja de servir enseguida
+  cache.set(cacheKey, userData, 15 * 1000);
   return userData;
 }
 

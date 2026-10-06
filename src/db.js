@@ -6,6 +6,11 @@ const pool = new Pool({
   connectionString: config.dbUrl,
 });
 
+const COLUMNAS_CLIENTE = `
+  id, client_id, company_name, zero_touch_customer_name, one_tenant_id, one_slug, is_active,
+  samsung_customer_id, plataformas_verificadas_at
+`;
+
 async function initDatabase() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS clients (
@@ -63,6 +68,10 @@ async function initDatabase() {
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS one_api_key TEXT;
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS one_api_secret TEXT;
     ALTER TABLE clients ADD COLUMN IF NOT EXISTS api_key_hash TEXT;
+
+    -- Plataformas en las que existe el Client ID, para no preguntarle a Google y a Knox en cada petición
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS samsung_customer_id TEXT;
+    ALTER TABLE clients ADD COLUMN IF NOT EXISTS plataformas_verificadas_at TIMESTAMPTZ;
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_one_tenant_id ON clients (one_tenant_id) WHERE one_tenant_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_clients_one_slug ON clients (one_slug);
@@ -131,7 +140,7 @@ async function checkDatabaseConnection() {
 async function getClientByDbId(clientDbId) {
   const result = await pool.query(
     `
-      SELECT id, client_id, company_name, zero_touch_customer_name, is_active
+      SELECT ${COLUMNAS_CLIENTE}
       FROM clients
       WHERE id = $1
       LIMIT 1
@@ -145,7 +154,7 @@ async function getClientByDbId(clientDbId) {
 async function getClientByClientId(clientId) {
   const result = await pool.query(
     `
-      SELECT id, client_id, company_name, zero_touch_customer_name, is_active
+      SELECT ${COLUMNAS_CLIENTE}
       FROM clients
       WHERE client_id = $1
       LIMIT 1
@@ -255,7 +264,7 @@ async function getClientByOneTenantId(oneTenantId) {
   if (!oneTenantId) return null;
   const result = await pool.query(
     `
-      SELECT id, client_id, company_name, zero_touch_customer_name, one_tenant_id, one_slug, is_active
+      SELECT ${COLUMNAS_CLIENTE}
       FROM clients
       WHERE one_tenant_id = $1
       LIMIT 1
@@ -269,7 +278,7 @@ async function getClientBySlug(slug) {
   if (!slug) return null;
   const result = await pool.query(
     `
-      SELECT id, client_id, company_name, zero_touch_customer_name, one_tenant_id, one_slug, is_active
+      SELECT ${COLUMNAS_CLIENTE}
       FROM clients
       WHERE one_slug = $1
       LIMIT 1
@@ -283,7 +292,7 @@ async function getClientByApiKeyHash(apiKeyHash) {
   if (!apiKeyHash) return null;
   const result = await pool.query(
     `
-      SELECT id, client_id, company_name, zero_touch_customer_name, one_tenant_id, one_slug, is_active
+      SELECT ${COLUMNAS_CLIENTE}
       FROM clients
       WHERE api_key_hash = $1 AND is_active = TRUE
       LIMIT 1
@@ -295,11 +304,14 @@ async function getClientByApiKeyHash(apiKeyHash) {
 
 /**
  * Sincroniza la lista de empresas de One asignadas al usuario para la app actual.
- * Equivalente a EmpresasOne.SincronizarAsync() de .NET:
- * 1. Si la empresa existe por one_tenant_id -> actualiza nombre y slug.
- * 2. Si la empresa fue recreada en One (mismo slug, nuevo GUID) -> re-vincula al nuevo GUID.
- * 3. Si existe por client_id igual a slug -> re-vincula al nuevo GUID.
- * 4. Si es nueva -> crea fila en clients.
+ * Equivalente a EmpresasOne.SincronizarAsync() de .NET.
+ *
+ * One manda, con cada empresa, su identificador en la app (`identifier`): el Client ID que la
+ * empresa tiene como variable en One. Ese es el client_id local. Así una empresa que ya entraba
+ * con su Client ID antes de One conserva su fila (y su caché de equipos) al vincularse.
+ *
+ * Orden de búsqueda: por one_tenant_id, por Client ID, por slug (empresa recreada en One con otro
+ * GUID). Si no aparece, se crea.
  */
 async function syncOneTenants(tenantsList = []) {
   const syncedClients = [];
@@ -310,62 +322,58 @@ async function syncOneTenants(tenantsList = []) {
 
     const companyName = name || slug || 'Empresa One';
     const companySlug = slug || tenantId;
+    const identifier = tenant.identifier ? String(tenant.identifier).trim() : null;
 
-    // 1. Buscar por one_tenant_id
-    let existing = await getClientByOneTenantId(tenantId);
+    const byTenant = await getClientByOneTenantId(tenantId);
+    const byIdentifier = identifier ? await getClientByClientId(identifier) : null;
 
-    if (existing) {
-      const updateResult = await pool.query(
-        `
-          UPDATE clients
-          SET company_name = $1, one_slug = $2, is_active = TRUE
-          WHERE id = $3
-          RETURNING id, client_id, company_name, zero_touch_customer_name, one_tenant_id, one_slug, is_active
-        `,
-        [companyName, companySlug, existing.id]
-      );
-      syncedClients.push({ ...updateResult.rows[0], role: role || 'Member' });
-      continue;
+    // La fila del Client ID manda: es la que tiene la historia de la empresa. Si One ya estaba
+    // ligado a otra fila (creada antes de que la empresa tuviera Client ID), se suelta.
+    let existing = byIdentifier || byTenant;
+    if (byIdentifier && byTenant && byIdentifier.id !== byTenant.id) {
+      await pool.query('UPDATE clients SET one_tenant_id = NULL, is_active = FALSE WHERE id = $1', [byTenant.id]);
     }
-
-    // 2. Buscar por slug (re-creada en One con nuevo GUID)
-    existing = await getClientBySlug(companySlug);
     if (!existing) {
-      // 3. Buscar si client_id coincide con el slug
+      existing = await getClientBySlug(companySlug);
+    }
+    // Una fila de otra empresa que tenga este slug como client_id solo sirve si no tiene Client ID propio.
+    if (!existing && !identifier) {
       existing = await getClientByClientId(companySlug);
     }
+    if (existing?.one_tenant_id && String(existing.one_tenant_id).toLowerCase() !== String(tenantId).toLowerCase()
+        && existing.id !== byIdentifier?.id) {
+      existing = null;
+    }
 
     if (existing) {
-      const reLinkResult = await pool.query(
+      const clientIdChanged = identifier && identifier !== existing.client_id;
+      const result = await pool.query(
         `
           UPDATE clients
-          SET one_tenant_id = $1, company_name = $2, one_slug = $3, is_active = TRUE
-          WHERE id = $4
-          RETURNING id, client_id, company_name, zero_touch_customer_name, one_tenant_id, one_slug, is_active
+          SET one_tenant_id = $1, company_name = $2, one_slug = $3, is_active = TRUE,
+              client_id = COALESCE($4, client_id),
+              plataformas_verificadas_at = CASE WHEN $5 THEN NULL ELSE plataformas_verificadas_at END,
+              zero_touch_customer_name = CASE WHEN $5 THEN NULL ELSE zero_touch_customer_name END,
+              samsung_customer_id = CASE WHEN $5 THEN NULL ELSE samsung_customer_id END
+          WHERE id = $6
+          RETURNING ${COLUMNAS_CLIENTE}
         `,
-        [tenantId, companyName, companySlug, existing.id]
+        [tenantId, companyName, companySlug, identifier, Boolean(clientIdChanged), existing.id]
       );
-      syncedClients.push({ ...reLinkResult.rows[0], role: role || 'Member' });
+      syncedClients.push({ ...result.rows[0], role: role || 'Member' });
       continue;
     }
 
-    // 4. Empresa nueva -> insertar
-    const newClient = await pool.query(
+    const created = await pool.query(
       `
         INSERT INTO clients (client_id, company_name, one_tenant_id, one_slug, is_active)
         VALUES ($1, $2, $3, $4, TRUE)
-        ON CONFLICT (client_id)
-        DO UPDATE SET
-          company_name = EXCLUDED.company_name,
-          one_tenant_id = EXCLUDED.one_tenant_id,
-          one_slug = EXCLUDED.one_slug,
-          is_active = TRUE
-        RETURNING id, client_id, company_name, zero_touch_customer_name, one_tenant_id, one_slug, is_active
+        RETURNING ${COLUMNAS_CLIENTE}
       `,
-      [companySlug, companyName, tenantId, companySlug]
+      [identifier || `one:${tenantId}`, companyName, tenantId, companySlug]
     );
 
-    syncedClients.push({ ...newClient.rows[0], role: role || 'Member' });
+    syncedClients.push({ ...created.rows[0], role: role || 'Member' });
   }
 
   return syncedClients;

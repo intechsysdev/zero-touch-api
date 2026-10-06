@@ -58,6 +58,15 @@ function buildIdentifierPreview(identifier) {
   };
 }
 
+/**
+ * Customer de Zero-touch de la empresa con la que entró el usuario. Sale de la empresa, nunca de
+ * la petición: si se aceptara uno que mande el navegador, cualquiera podría ver o reclamar
+ * equipos de otro cliente.
+ *
+ * 1. El que se encontró en Google con el Client ID de la empresa (coincidencia exacta).
+ * 2. Si no, ZERO_TOUCH_CUSTOMER_ID de la configuración de la empresa en One (lo fija un
+ *    administrador, para clientes cuyo Customer ID no es su Client ID).
+ */
 async function resolveCustomerIdFromAuth(req) {
   const clientDbId = Number(req.auth.clientDbId);
   const client = await getClientByDbId(clientDbId);
@@ -68,10 +77,8 @@ async function resolveCustomerIdFromAuth(req) {
     throw error;
   }
 
-  // 1. Si ya tiene zero_touch_customer_name en la BD local
   let customerName = client.zero_touch_customer_name || '';
 
-  // 2. Si no lo tiene, consultar la configuración dinámica de One (Settings)
   if (!customerName) {
     try {
       const dynamicConfig = await getCompanyDynamicConfig(client.id);
@@ -87,51 +94,10 @@ async function resolveCustomerIdFromAuth(req) {
     }
   }
 
-  // 3. Si aún no lo tiene, intentar auto-vincular buscando en los clientes de Google Zero Touch
-  if (!customerName) {
-    try {
-      const customersData = await listCustomers();
-      const googleCustomers = Array.isArray(customersData.customers) ? customersData.customers : [];
-
-      const targetName = String(client.company_name || '').toLowerCase().trim();
-      const targetSlug = String(client.one_slug || client.client_id || '').toLowerCase().trim();
-
-      const matched = googleCustomers.find((c) => {
-        const cName = String(c.companyName || '').toLowerCase().trim();
-        const cId = String(c.companyId || '').toLowerCase().trim();
-        return (
-          cId === targetSlug ||
-          cName === targetName ||
-          cName.includes(targetName) ||
-          targetName.includes(cName)
-        );
-      });
-
-      if (matched && matched.name) {
-        customerName = matched.name;
-        await pool.query(
-          'UPDATE clients SET zero_touch_customer_name = $1 WHERE id = $2',
-          [customerName, client.id]
-        ).catch(() => {});
-        console.log(`[Auto-link] Empresa "${client.company_name}" vinculada automáticamente a Google ZeroTouch: ${customerName}`);
-      }
-    } catch (googleError) {
-      console.warn('Auto-búsqueda en Google Zero Touch falló:', googleError.message);
-    }
-  }
-
-  // 4. Si fue enviado explícitamente en el query
-  if (!customerName && req.query?.customerId) {
-    const candidateId = String(req.query.customerId).trim();
-    if (candidateId) {
-      customerName = `customers/${candidateId}`;
-    }
-  }
-
   const customerId = String(customerName).split('/').pop();
   if (!customerId) {
     const error = new Error(
-      `La empresa "${client.company_name}" no tiene un Customer ID de Zero Touch asignado. Puedes configurarlo en One (ZERO_TOUCH_CUSTOMER_ID) o seleccionarlo en la consola.`
+      `El Client ID ${client.client_id} de "${client.company_name}" no existe en Zero-touch. Revise la variable de la empresa en One.`
     );
     error.statusCode = 400;
     throw error;
@@ -140,12 +106,18 @@ async function resolveCustomerIdFromAuth(req) {
   return customerId;
 }
 
+/** Vincular empresas con clientes o listar los clientes del reseller es cosa de la plataforma. */
+function soloPlataforma(req, res, next) {
+  if (req.user?.isPlatformAdmin) return next();
+  return res.status(403).json({ message: 'Solo un administrador de la plataforma puede hacer esto.' });
+}
+
 /**
  * Endpoint para vincular o actualizar el Zero Touch Customer ID de una empresa
  * PUT /zerotouch/customers/link
  * Body: { customerId: "1791589702" } o { customerName: "customers/1791589702" }
  */
-router.put('/customers/link', async (req, res, next) => {
+router.put('/customers/link', soloPlataforma, async (req, res, next) => {
   try {
     const schema = z.object({
       customerId: z.union([z.string(), z.number()]),
@@ -183,7 +155,7 @@ router.put('/customers/link', async (req, res, next) => {
   }
 });
 
-router.get('/customers', async (req, res, next) => {
+router.get('/customers', soloPlataforma, async (req, res, next) => {
   try {
     const data = await listCustomers();
     await writeAuditLog({

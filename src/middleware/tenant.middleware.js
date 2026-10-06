@@ -1,6 +1,7 @@
 const { oneConfig } = require('../one');
-const { getClientByOneTenantId, getClientByDbId } = require('../db');
+const { getClientByOneTenantId } = require('../db');
 const { syncUserTenants } = require('../one');
+const { asegurarPlataformas, resumenPlataformas } = require('../plataformas');
 
 /**
  * Middleware de Resolución de Tenant (Empresa).
@@ -12,9 +13,8 @@ const { syncUserTenants } = require('../one');
  *    - Valida que el usuario tenga membresía en la empresa especificada (o sea PlatformAdmin).
  *    - Busca la empresa en PostgreSQL por 'one_tenant_id'.
  *    - Si no existe aún en la BD local, ejecuta auto-sincronización con One.
+ *    - Deja al día en qué plataformas (Zero-touch, Knox) existe su Client ID.
  *    - Adjunta req.tenant y req.auth.clientDbId para los controladores de Zero Touch / Knox.
- * 3. Si es usuario con token local:
- *    - Carga la empresa correspondiente a req.auth.clientDbId.
  */
 async function resolveTenant(req, res, next) {
   // Si ya fue resuelto previamente (por ejemplo, por apiKeyMiddleware), continuar
@@ -30,6 +30,7 @@ async function resolveTenant(req, res, next) {
       req.query?.tenantId;
 
     let targetTenantId = tenantHeader ? String(tenantHeader).trim() : null;
+    const explicito = Boolean(targetTenantId);
 
     // Si no envió cabecera, verificar si tiene solo una membresía asignada
     if (!targetTenantId) {
@@ -39,29 +40,10 @@ async function resolveTenant(req, res, next) {
       }
     }
 
+    // Sin empresa elegida se sigue sin ella: la sesión responde con la lista para que la consola
+    // elija, y las rutas de equipos la exigen con requireTenant.
     if (!targetTenantId) {
-      // Si no hay tenant seleccionado y es PlatformAdmin, permitir continuar sin tenant
-      if (req.user.isPlatformAdmin) {
-        return next();
-      }
-
-      // Si el usuario tiene múltiples empresas y no indicó cuál usar
-      const memberships = req.user.memberships || [];
-      if (memberships.length > 1) {
-        return res.status(400).json({
-          message:
-            'Debe especificar la cabecera X-Tenant-Id indicando la empresa a gestionar.',
-          availableTenants: memberships.map((m) => ({
-            tenantId: m.tenantId,
-            name: m.tenantName || m.name,
-            slug: m.tenantSlug || m.slug,
-          })),
-        });
-      }
-
-      return res.status(403).json({
-        message: 'El usuario no tiene ninguna empresa asignada en One.',
-      });
+      return next();
     }
 
     // Validar que el usuario tenga acceso al tenant especificado
@@ -89,17 +71,18 @@ async function resolveTenant(req, res, next) {
           console.warn('Auto-sincronización de tenants falló:', syncError.message);
         }
       }
+
+      if (client?.is_active) {
+        client = await asegurarPlataformas(client);
+      }
     } catch (dbError) {
-      console.warn('Advertencia BD al consultar tenant:', dbError.message);
-      // Fallback provisional si la BD no está disponible en entorno actual
-      client = {
-        id: targetTenantId,
-        client_id: targetTenantId,
-        company_name: membership?.tenantName || 'Empresa One',
-        one_tenant_id: targetTenantId,
-        one_slug: membership?.tenantSlug || targetTenantId,
-        is_active: true,
-      };
+      console.error('Error de BD al consultar la empresa:', dbError.message);
+      return res.status(503).json({ message: 'No se pudo cargar la empresa. Intente de nuevo en un momento.' });
+    }
+
+    // La única empresa del usuario puede no tener zero-touch: entonces no hay empresa activa.
+    if (!client && !explicito) {
+      return next();
     }
 
     if (!client) {
@@ -116,6 +99,8 @@ async function resolveTenant(req, res, next) {
     }
 
     // Adjuntar tenant y compatibilizar con los controladores existentes
+    const plataformas = resumenPlataformas(client);
+
     req.tenant = {
       id: client.id,
       clientDbId: client.id,
@@ -123,39 +108,17 @@ async function resolveTenant(req, res, next) {
       companyName: client.company_name,
       oneTenantId: client.one_tenant_id,
       oneSlug: client.one_slug,
-      zeroTouchCustomerName: client.zero_touch_customer_name,
+      ...plataformas,
       role: membership?.role || (req.user.isPlatformAdmin ? 'PlatformAdmin' : 'Member'),
     };
 
     req.auth.clientDbId = client.id;
     req.auth.clientId = client.client_id;
     req.auth.companyName = client.company_name;
+    // Las rutas de Knox leen de aquí el cliente autorizado.
+    req.auth.samsungCustomerId = plataformas.samsungCustomerId;
 
     return next();
-  }
-
-  // 2. Caso: Usuario autenticado con token local clásico
-  if (req.auth && req.auth.clientDbId) {
-    try {
-      const client = await getClientByDbId(Number(req.auth.clientDbId));
-      if (!client || !client.is_active) {
-        return res.status(403).json({ message: 'Cliente inactivo o no encontrado.' });
-      }
-
-      req.tenant = {
-        id: client.id,
-        clientDbId: client.id,
-        clientId: client.client_id,
-        companyName: client.company_name,
-        oneTenantId: client.one_tenant_id,
-        oneSlug: client.one_slug,
-        zeroTouchCustomerName: client.zero_touch_customer_name,
-        role: req.auth.role || 'admin',
-      };
-      return next();
-    } catch (error) {
-      return res.status(500).json({ message: 'Error cargando datos de la empresa.' });
-    }
   }
 
   return next();
