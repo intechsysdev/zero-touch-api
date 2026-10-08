@@ -4,6 +4,8 @@ const {
   listCustomers,
   listConfigurations,
   claimDevice,
+  applyConfiguration,
+  findDevicesByIdentifier,
   unclaimDevice,
 } = require('./zerotouch.client');
 const { pool, writeAuditLog, getClientByDbId, listClientDevices } = require('../db');
@@ -32,6 +34,13 @@ function normalizeDeviceIdentifier(identifier = {}) {
     throw error;
   }
 
+  // Google identifica un serial junto con su fabricante (y modelo): solo no basta.
+  if (!normalized.imei && !normalized.manufacturer) {
+    const error = new Error('Para identificar el equipo por serial indique también el fabricante y el modelo.');
+    error.statusCode = 400;
+    throw error;
+  }
+
   return normalized;
 }
 
@@ -44,6 +53,73 @@ function maybeTranslateIdentifierError(error) {
     error.message =
       'Identificador invalido. Usa IMEI de 15 digitos o combina serialNumber con manufacturer y model.';
   }
+}
+
+/** El reclamo de Zero-touch de este cliente sobre el equipo, si lo tiene. */
+function reclamoDelCliente(device, customerId) {
+  return (device.claims || []).find(
+    (c) =>
+      String(c.ownerCompanyId || '') === String(customerId) &&
+      (!c.sectionType || c.sectionType === 'SECTION_TYPE_ZERO_TOUCH')
+  );
+}
+
+/**
+ * El equipo con ese identificador, solo si es de este cliente. Google lo busca entre todos los
+ * del reseller: sin este filtro un cliente vería (o liberaría) equipos de otro.
+ */
+async function buscarEquipoDelCliente(customerId, deviceIdentifier) {
+  const data = await findDevicesByIdentifier({ deviceIdentifier, limit: 10 });
+  const devices = Array.isArray(data.devices) ? data.devices : [];
+  return devices.find((d) => reclamoDelCliente(d, customerId)) || null;
+}
+
+/** Lo que se devuelve de un equipo: sus identificadores, la configuración y el reclamo. */
+function resumenEquipo(device, customerId) {
+  const id = device.deviceIdentifier || {};
+  const reclamo = reclamoDelCliente(device, customerId) || {};
+  return {
+    deviceId: device.deviceId,
+    name: device.name,
+    imei: id.imei || null,
+    serialNumber: id.serialNumber || null,
+    manufacturer: id.manufacturer || null,
+    model: id.model || null,
+    configuration: device.configuration || null,
+    ownerCompanyId: reclamo.ownerCompanyId || null,
+    resellerId: reclamo.resellerId || null,
+    sectionType: reclamo.sectionType || null,
+  };
+}
+
+/** Identificador de un equipo desde la consulta (?imei= o ?serialNumber=&manufacturer=&model=). */
+function identificadorDeConsulta(query) {
+  return normalizeDeviceIdentifier({
+    imei: query.imei ? String(query.imei) : undefined,
+    serialNumber: query.serialNumber ? String(query.serialNumber) : undefined,
+    manufacturer: query.manufacturer ? String(query.manufacturer) : undefined,
+    model: query.model ? String(query.model) : undefined,
+  });
+}
+
+/**
+ * Reclama y, si se pidió, le aplica la configuración. La configuración va aparte porque la API de
+ * partner no la acepta en el reclamo; si falla, el equipo queda reclamado y se dice por qué.
+ */
+async function reclamar({ customerId, deviceIdentifier, configurationId }) {
+  const claim = await claimDevice({ customerId, deviceIdentifier });
+  let configuracion = null;
+
+  if (configurationId) {
+    try {
+      await applyConfiguration({ customerId, deviceId: claim.deviceId, configurationId });
+      configuracion = { aplicada: true, configurationId };
+    } catch (error) {
+      configuracion = { aplicada: false, configurationId, error: error.message };
+    }
+  }
+
+  return { ...claim, configuracion };
 }
 
 function buildIdentifierPreview(identifier) {
@@ -274,6 +350,35 @@ router.get('/devices', async (req, res, next) => {
   }
 });
 
+/**
+ * Consulta de un equipo por IMEI (?imei=) o serial (?serialNumber=&manufacturer=&model=),
+ * directo en Zero-touch. Solo responde si el equipo es de este cliente: uno de otro cliente sale
+ * igual que uno que no existe, para no revelar de quién es.
+ */
+router.get('/devices/buscar', async (req, res, next) => {
+  try {
+    const deviceIdentifier = identificadorDeConsulta(req.query || {});
+    const customerId = await resolveCustomerIdFromAuth(req);
+    const device = await buscarEquipoDelCliente(customerId, deviceIdentifier);
+
+    await writeAuditLog({
+      userId: Number(req.auth.sub),
+      clientDbId: Number(req.auth.clientDbId),
+      action: 'zerotouch.devices.search',
+      payload: { customerId, deviceIdentifier, encontrado: Boolean(device) },
+    });
+
+    if (!device) {
+      return res.status(404).json({ message: 'No hay un equipo con ese identificador en Zero-touch para su empresa.' });
+    }
+
+    res.json({ device: resumenEquipo(device, customerId), raw: device });
+  } catch (error) {
+    maybeTranslateIdentifierError(error);
+    next(error);
+  }
+});
+
 router.get('/devices/identifier-options', async (req, res, next) => {
   try {
     const schema = z.object({
@@ -379,7 +484,7 @@ router.post('/devices/claim', devicesLimiter, async (req, res, next) => {
       throw error;
     }
 
-    const data = await claimDevice({
+    const data = await reclamar({
       customerId,
       deviceIdentifier,
       configurationId,
@@ -474,7 +579,7 @@ router.post('/devices/claim/bulk', devicesLimiter, async (req, res, next) => {
       }
 
       try {
-        const claimResponse = await claimDevice({
+        const claimResponse = await reclamar({
           customerId,
           deviceIdentifier: identifier,
           configurationId: itemConfigurationId,
@@ -485,6 +590,7 @@ router.post('/devices/claim/bulk', devicesLimiter, async (req, res, next) => {
           status: 'claimed',
           deviceIdentifier: buildIdentifierPreview(identifier),
           configurationId: itemConfigurationId || null,
+          configuracion: claimResponse.configuracion,
           response: claimResponse,
         });
       } catch (error) {
@@ -556,12 +662,19 @@ router.post('/devices/unclaim', devicesLimiter, async (req, res, next) => {
     });
     const body = schema.parse(req.body);
     const deviceIdentifier = normalizeDeviceIdentifier(body.deviceIdentifier);
-
-    const data = await unclaimDevice({
-      deviceIdentifier,
-    });
-
     const customerId = await resolveCustomerIdFromAuth(req);
+
+    // Google libera el equipo sea de quien sea: sin esta comprobación un cliente podría sacar de
+    // Zero-touch los equipos de otro con solo conocer su IMEI.
+    const device = await buscarEquipoDelCliente(customerId, deviceIdentifier);
+    if (!device) {
+      const error = new Error('No hay un equipo con ese identificador en Zero-touch para su empresa.');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const data = await unclaimDevice({ deviceId: device.deviceId });
+
     await syncClientDevices({
       clientDbId: Number(req.auth.clientDbId),
       customerId,
@@ -571,7 +684,7 @@ router.post('/devices/unclaim', devicesLimiter, async (req, res, next) => {
       userId: Number(req.auth.sub),
       clientDbId: Number(req.auth.clientDbId),
       action: 'zerotouch.devices.unclaim',
-      payload: { deviceIdentifier },
+      payload: { customerId, deviceId: device.deviceId, deviceIdentifier },
     });
 
     res.json(data);

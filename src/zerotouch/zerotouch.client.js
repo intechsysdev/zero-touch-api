@@ -119,28 +119,52 @@ async function deleteConfiguration({ customerId, configurationId }) {
   });
 }
 
-async function claimDevice({ customerId, deviceIdentifier, configurationId }) {
-  const body = {
-    customerId,
-    deviceIdentifier,
-    sectionType: 'SECTION_TYPE_ZERO_TOUCH',
-  };
-
-  if (configurationId !== undefined && configurationId !== null && configurationId !== '') {
-    body.configurationId = configurationId;
-  }
-
+/**
+ * Reclama el equipo para el cliente. La API de partner NO acepta configurationId (Google rechaza
+ * los campos que no conoce con 400): la configuración se aplica después con applyConfiguration.
+ */
+async function claimDevice({ customerId, deviceIdentifier }) {
   return callZeroTouch(`/partners/${config.zeroTouchPartnerId}/devices:claim`, {
     method: 'POST',
-    body,
+    body: {
+      customerId,
+      deviceIdentifier,
+      sectionType: 'SECTION_TYPE_ZERO_TOUCH',
+    },
   });
 }
 
-async function unclaimDevice({ deviceIdentifier }) {
-  return callZeroTouch(`/partners/${config.zeroTouchPartnerId}/devices:unclaim`, {
+/** Asigna una configuración del cliente a un equipo ya reclamado (API de cliente). */
+async function applyConfiguration({ customerId, deviceId, configurationId }) {
+  return callZeroTouch(`/customers/${customerId}/devices:applyConfiguration`, {
+    method: 'POST',
+    body: {
+      device: { deviceId: String(deviceId) },
+      configuration: `customers/${customerId}/configurations/${configurationId}`,
+    },
+  });
+}
+
+/**
+ * Busca un equipo por IMEI o por serial (+ fabricante y modelo). Devuelve todos los registros que
+ * Google tenga para ese identificador, con sus reclamos (claims): de qué cliente es cada uno.
+ */
+async function findDevicesByIdentifier({ deviceIdentifier, limit = 10 }) {
+  return callZeroTouch(`/partners/${config.zeroTouchPartnerId}/devices:findByIdentifier`, {
     method: 'POST',
     body: {
       deviceIdentifier,
+      limit: String(limit),
+    },
+  });
+}
+
+/** Libera el equipo. Google no pide el cliente: hay que comprobar antes que es del que lo pide. */
+async function unclaimDevice({ deviceId }) {
+  return callZeroTouch(`/partners/${config.zeroTouchPartnerId}/devices:unclaim`, {
+    method: 'POST',
+    body: {
+      deviceId: String(deviceId),
       sectionType: 'SECTION_TYPE_ZERO_TOUCH',
     },
   });
@@ -153,5 +177,7 @@ module.exports = {
   deleteConfiguration,
   findDevicesByOwner,
   claimDevice,
+  applyConfiguration,
+  findDevicesByIdentifier,
   unclaimDevice,
 };

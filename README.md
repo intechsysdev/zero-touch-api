@@ -100,9 +100,10 @@ ID). If a customer's Zero-touch ID differs, set `ZERO_TOUCH_CUSTOMER_ID` for the
 - `GET /zerotouch/customers`: List the reseller's customers (platform admins only)
 - `GET /zerotouch/devices?customerId=...`: List provisioned devices
 - `GET /zerotouch/devices/identifier-options`: List available manufacturers and models
-- `POST /zerotouch/devices/claim`: Claim single device
+- `GET /zerotouch/devices/buscar?imei=…` (or `?serialNumber=…&manufacturer=…&model=…`): look up one device in Zero-touch; 404 unless it belongs to the company's customer
+- `POST /zerotouch/devices/claim`: Claim single device (IMEI, or serial + manufacturer + model). An optional `configurationId` is applied after the claim (`customers.devices.applyConfiguration`); if that fails the device stays claimed and `configuracion.error` says why
 - `POST /zerotouch/devices/claim/bulk`: Bulk claim devices
-- `POST /zerotouch/devices/unclaim`: Unclaim device
+- `POST /zerotouch/devices/unclaim`: Unclaim device — only if it belongs to the company's customer (Google's unclaim doesn't check the owner)
 
 ### Samsung Knox (requires `Authorization: Bearer <token>`)
 - `GET /samsung/devices`: List Knox devices
