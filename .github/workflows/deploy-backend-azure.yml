@@ -3,7 +3,7 @@ name: Deploy Backend to Azure Container Apps
 on:
   push:
     branches:
-      - main
+      - develop
   workflow_dispatch:
 
 jobs:
