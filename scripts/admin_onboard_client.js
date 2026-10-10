@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const bcrypt = require('bcryptjs');
-const { pool } = require('../src/db');
+const { query, cerrarConexion } = require('../src/db');
 
 function usage() {
   console.log(
@@ -12,33 +12,33 @@ function usage() {
 async function upsertClient({ clientId, companyName, zeroTouchCustomerId }) {
   const customerName = `customers/${zeroTouchCustomerId}`;
 
-  const existing = await pool.query(
-    'SELECT id FROM clients WHERE client_id = $1 LIMIT 1',
-    [clientId]
+  const existing = await query(
+    'SELECT TOP (1) id FROM clients WHERE client_id = @clientId',
+    { clientId }
   );
 
   if (existing.rows[0]) {
     const clientDbId = existing.rows[0].id;
-    await pool.query(
+    await query(
       `
         UPDATE clients
-        SET company_name = $1,
-            zero_touch_customer_name = $2,
-            is_active = TRUE
-        WHERE id = $3
+        SET company_name = @companyName,
+            zero_touch_customer_name = @customerName,
+            is_active = 1
+        WHERE id = @clientDbId
       `,
-      [companyName, customerName, clientDbId]
+      { companyName, customerName, clientDbId }
     );
     return clientDbId;
   }
 
-  const created = await pool.query(
+  const created = await query(
     `
       INSERT INTO clients (client_id, company_name, zero_touch_customer_name, is_active)
-      VALUES ($1, $2, $3, TRUE)
-      RETURNING id
+      OUTPUT INSERTED.id
+      VALUES (@clientId, @companyName, @customerName, 1)
     `,
-    [clientId, companyName, customerName]
+    { clientId, companyName, customerName }
   );
 
   return created.rows[0].id;
@@ -48,45 +48,45 @@ async function upsertUser({ email, clientId }) {
   const normalizedEmail = email.trim().toLowerCase();
   const passwordHash = bcrypt.hashSync(clientId, 10);
 
-  const existing = await pool.query(
-    'SELECT id FROM users WHERE lower(email) = $1 LIMIT 1',
-    [normalizedEmail]
+  const existing = await query(
+    'SELECT TOP (1) id FROM users WHERE LOWER(email) = @email',
+    { email: normalizedEmail }
   );
 
   if (existing.rows[0]) {
     const userDbId = existing.rows[0].id;
-    await pool.query(
+    await query(
       `
         UPDATE users
-        SET password_hash = $1,
-            is_active = TRUE
-        WHERE id = $2
+        SET password_hash = @passwordHash,
+            is_active = 1
+        WHERE id = @userDbId
       `,
-      [passwordHash, userDbId]
+      { passwordHash, userDbId }
     );
     return userDbId;
   }
 
-  const created = await pool.query(
+  const created = await query(
     `
       INSERT INTO users (email, password_hash, is_active)
-      VALUES ($1, $2, TRUE)
-      RETURNING id
+      OUTPUT INSERTED.id
+      VALUES (@email, @passwordHash, 1)
     `,
-    [normalizedEmail, passwordHash]
+    { email: normalizedEmail, passwordHash }
   );
 
   return created.rows[0].id;
 }
 
 async function upsertUserClient({ userDbId, clientDbId }) {
-  await pool.query(
+  await query(
     `
-      INSERT INTO user_clients (user_id, client_id, role)
-      VALUES ($1, $2, 'admin')
-      ON CONFLICT (user_id, client_id) DO UPDATE SET role = EXCLUDED.role
+      UPDATE user_clients SET role = N'admin' WHERE user_id = @userDbId AND client_id = @clientDbId;
+      IF @@ROWCOUNT = 0
+        INSERT INTO user_clients (user_id, client_id, role) VALUES (@userDbId, @clientDbId, N'admin');
     `,
-    [userDbId, clientDbId]
+    { userDbId, clientDbId }
   );
 }
 
@@ -128,5 +128,5 @@ main()
     process.exit(1);
   })
   .finally(async () => {
-    await pool.end();
+    await cerrarConexion();
   });

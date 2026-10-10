@@ -1,166 +1,69 @@
-# Azure Deployment Guide (Backend Intechsys)
+# Azure Deployment Guide (Zero-touch API)
 
 ## Architecture
 
-- Azure Container Apps: Node.js backend
-- Azure Database for PostgreSQL Flexible Server
-- Azure Key Vault: JWT and Google credentials
-- Azure Container Registry (ACR)
+| Environment | Hosting | Database | Deploys from |
+|---|---|---|---|
+| Production | Azure App Service (Linux, Node 20) `app-zerotouch-api-prd` — https://app-zerotouch-api-prd-a4cgg3amfecgbear.centralus-01.azurewebsites.net | Azure SQL Database `ZeroTouch` on `sql-zerotouch-prd-01.database.windows.net` | `main` → `.github/workflows/main_app-zerotouch-api-prd.yml` |
+| Development | Azure Container Apps | SQL Server (set `DB_*` on the container app) | `develop` → `.github/workflows/deploy-backend-azure.yml` |
 
-## 1) One-command deploy script
+Users sign in through Intechsys One
+(https://app-intechsysone-api-prd-bxehhkf8dgcwbve9.centralus-01.azurewebsites.net). Consoles:
+production https://happy-desert-04a62e310.3.azurestaticapps.net, development
+https://witty-mushroom-070e3901e.6.azurestaticapps.net.
 
-Use script:
+## 1) Production: App Service
 
-- deploy/azure/deploy.sh
+The workflow runs on every push to `main`: `npm ci`, a boot check (`require('./src/server')`,
+which needs no database), `npm ci --omit=dev`, zips `src`, `node_modules` and `package*.json`, and
+deploys the zip with `azure/webapps-deploy@v3` (OIDC login with the `AZUREAPPSERVICE_*` secrets).
 
-Required env vars:
+App Service settings:
 
-- RESOURCE_GROUP
-- LOCATION
-- ACR_NAME
-- CONTAINER_ENV_NAME
-- CONTAINER_APP_NAME
-- PG_SERVER_NAME
-- PG_ADMIN_USER
-- PG_ADMIN_PASSWORD
-- JWT_SECRET
-- ZERO_TOUCH_PARTNER_ID
-- GOOGLE_SERVICE_ACCOUNT_JSON
+- **Stack**: Node 20 LTS. Startup command empty (App Service runs `npm start` → `node src/server.js`).
+  The server listens on `PORT`, which App Service sets.
+- **Health check path**: `/health` (or `/ready`, which also checks the database).
+- `SCM_DO_BUILD_DURING_DEPLOYMENT=false` (the zip already includes `node_modules`).
 
-Optional env vars:
+Application settings the code does **not** default (set them in the portal):
 
-- IMAGE_NAME (default: intechsys-backend)
-- IMAGE_TAG (default: v1)
-- PG_DB_NAME (default: intechsys_zt)
-- CORS_ORIGIN (default: *)
+| Name | Value |
+|---|---|
+| `NODE_ENV` | `production` (enables the production CORS list and checks) |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Full JSON of the Google Zero-touch service account key (secret — never commit it) |
+| `SAMSUNG_KNOX_*` | Only if Knox is used: `SAMSUNG_KNOX_ENABLED=true` plus the credentials (see `.env.example`) |
 
-Run:
+Everything else has production defaults in `src/config.js` and can be overridden with an app
+setting of the same name: `DB_SERVER`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_ENCRYPT`
+(or a full `DB_CONNECTION_STRING`), `ONE_BASE_URL`, `ONE_APP_SLUG`, `ZERO_TOUCH_PARTNER_ID`,
+`ZERO_TOUCH_BASE_URL`, `CORS_ORIGIN`.
+
+## 2) Database: Azure SQL
+
+The API creates its tables at startup (idempotent; safe with several instances starting at once),
+so an empty database is enough. Nothing else to run.
+
+Network: the server has *Deny public network access* enabled, so the App Service must reach it
+through a private endpoint (App Service VNet integration + private endpoint for the SQL server +
+`privatelink.database.windows.net` DNS zone). Alternatively allow public access with the
+"Allow Azure services and resources to access this server" rule.
+
+## 3) Development: Container Apps script
+
+`deploy/azure/deploy.sh` builds the image in ACR and creates/updates a Container App. Required env
+vars: `RESOURCE_GROUP`, `LOCATION`, `ACR_NAME`, `CONTAINER_ENV_NAME`, `CONTAINER_APP_NAME`,
+`DB_SERVER`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `ZERO_TOUCH_PARTNER_ID`,
+`GOOGLE_SERVICE_ACCOUNT_JSON`. Optional: `IMAGE_NAME`, `IMAGE_TAG`, `CORS_ORIGIN`,
+`ONE_BASE_URL`, `ONE_APP_SLUG`.
 
 ```bash
 ./deploy/azure/deploy.sh
 ```
 
-The script creates/updates:
+Without `DB_*` variables the API connects to the production database, so the development
+Container App must always have them.
 
-- Resource group
-- ACR + image build
-- PostgreSQL flexible server + DB
-- Container Apps env
-- Container App with secrets and env vars
+## 4) Health checks
 
-At the end it prints backend URL.
-
-## 2) Manual commands (alternative)
-
-Set variables:
-
-- RESOURCE_GROUP
-- LOCATION
-- ACR_NAME
-- IMAGE_NAME=intechsys-backend
-- IMAGE_TAG=v1
-
-Commands:
-
-```bash
-az group create -n $RESOURCE_GROUP -l $LOCATION
-az acr create -n $ACR_NAME -g $RESOURCE_GROUP --sku Basic
-az acr build -r $ACR_NAME -t $IMAGE_NAME:$IMAGE_TAG .
-```
-
-## 3) Create PostgreSQL Flexible Server
-
-```bash
-az postgres flexible-server create \
-  --resource-group $RESOURCE_GROUP \
-  --name intechsys-postgres-prod \
-  --location $LOCATION \
-  --admin-user pgadmin \
-  --admin-password '<strong-password>' \
-  --sku-name Standard_B1ms \
-  --tier Burstable \
-  --storage-size 32
-```
-
-Create DB:
-
-```bash
-az postgres flexible-server db create \
-  --resource-group $RESOURCE_GROUP \
-  --server-name intechsys-postgres-prod \
-  --database-name intechsys_zt
-```
-
-## 4) Create Container Apps environment
-
-```bash
-az containerapp env create \
-  --name intechsys-env \
-  --resource-group $RESOURCE_GROUP \
-  --location $LOCATION
-```
-
-## 5) Deploy container app
-
-```bash
-az containerapp create \
-  --name intechsys-backend \
-  --resource-group $RESOURCE_GROUP \
-  --environment intechsys-env \
-  --image $ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG \
-  --target-port 8080 \
-  --ingress external \
-  --registry-server $ACR_NAME.azurecr.io \
-  --min-replicas 1 \
-  --max-replicas 3 \
-  --env-vars \
-    NODE_ENV=production \
-    PORT=8080 \
-    JWT_EXPIRES_IN=8h \
-    ZERO_TOUCH_BASE_URL=https://androiddeviceprovisioning.googleapis.com \
-    TRUST_PROXY=true
-```
-
-## 6) Set secrets and sensitive vars
-
-Use Key Vault and set Container App secrets:
-
-- JWT_SECRET
-- DB_URL
-- GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS
-
-Then bind secrets as env vars in Container App revision.
-
-## 7) Health checks
-
-Configure readiness/liveness with:
-
-- /health
-- /ready
-
-## 8) Flutter app points only to backend URL
-
-Run Flutter with:
-
-```bash
-flutter run --dart-define=BACKEND_BASE_URL=https://<your-backend-domain>
-```
-
-Never call Google Zero-touch directly from Flutter.
-
-## 9) Validate Zero-touch flow
-
-1. Login:
-
-```bash
-curl -X POST https://<your-backend-domain>/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"cliente.demo@intechsys.com","password":"CLI-1001","clientId":"CLI-1001"}'
-```
-
-2. Customers with token:
-
-```bash
-curl -H "Authorization: Bearer <token>" \
-  https://<your-backend-domain>/zerotouch/customers
-```
+- `/health`: liveness
+- `/ready`: readiness (runs `SELECT 1` against the database)

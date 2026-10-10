@@ -11,7 +11,7 @@ const { asegurarPlataformas, resumenPlataformas } = require('../plataformas');
  * 1. Lee la cabecera 'X-Tenant-Id' (o req.headers['x-tenant-id']).
  * 2. Si es usuario autenticado con One:
  *    - Valida que el usuario tenga membresía en la empresa especificada (o sea PlatformAdmin).
- *    - Busca la empresa en PostgreSQL por 'one_tenant_id'.
+ *    - Busca la empresa en la base de datos por 'one_tenant_id'.
  *    - Si no existe aún en la BD local, ejecuta auto-sincronización con One.
  *    - Deja al día en qué plataformas (Zero-touch, Knox) existe su Client ID.
  *    - Adjunta req.tenant y req.auth.clientDbId para los controladores de Zero Touch / Knox.
@@ -57,7 +57,7 @@ async function resolveTenant(req, res, next) {
       });
     }
 
-    // 2. Buscar empresa en PostgreSQL por one_tenant_id
+    // 2. Buscar empresa en la base de datos por one_tenant_id
     let client = null;
     try {
       client = await getClientByOneTenantId(targetTenantId);

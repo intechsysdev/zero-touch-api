@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const bcrypt = require('bcryptjs');
-const { pool } = require('../src/db');
+const { query, cerrarConexion } = require('../src/db');
 
 function usage() {
   console.log(
@@ -24,46 +24,46 @@ async function main() {
   const passwordHash = bcrypt.hashSync(clientId, 10);
   const zeroTouchCustomerName = `customers/${zeroTouchCustomerId}`;
 
-  const duplicateClient = await pool.query(
-    'SELECT id FROM clients WHERE client_id = $1 LIMIT 1',
-    [clientId]
+  const duplicateClient = await query(
+    'SELECT TOP (1) id FROM clients WHERE client_id = @clientId',
+    { clientId }
   );
   if (duplicateClient.rows[0]) {
     throw new Error(`clientId ya existe: ${clientId}`);
   }
 
-  const duplicateEmail = await pool.query(
-    'SELECT id FROM users WHERE lower(email) = $1 LIMIT 1',
-    [email]
+  const duplicateEmail = await query(
+    'SELECT TOP (1) id FROM users WHERE LOWER(email) = @email',
+    { email }
   );
   if (duplicateEmail.rows[0]) {
     throw new Error(`email ya existe: ${email}`);
   }
 
-  const clientInsert = await pool.query(
+  const clientInsert = await query(
     `
       INSERT INTO clients (client_id, company_name, zero_touch_customer_name, is_active)
-      VALUES ($1, $2, $3, TRUE)
-      RETURNING id
+      OUTPUT INSERTED.id
+      VALUES (@clientId, @companyName, @zeroTouchCustomerName, 1)
     `,
-    [clientId, companyName, zeroTouchCustomerName]
+    { clientId, companyName, zeroTouchCustomerName }
   );
 
-  const userInsert = await pool.query(
+  const userInsert = await query(
     `
       INSERT INTO users (email, password_hash, is_active)
-      VALUES ($1, $2, TRUE)
-      RETURNING id
+      OUTPUT INSERTED.id
+      VALUES (@email, @passwordHash, 1)
     `,
-    [email, passwordHash]
+    { email, passwordHash }
   );
 
-  await pool.query(
+  await query(
     `
       INSERT INTO user_clients (user_id, client_id, role)
-      VALUES ($1, $2, 'admin')
+      VALUES (@userId, @clientDbId, N'admin')
     `,
-    [userInsert.rows[0].id, clientInsert.rows[0].id]
+    { userId: userInsert.rows[0].id, clientDbId: clientInsert.rows[0].id }
   );
 
   console.log('Client-user creado correctamente');
@@ -80,5 +80,5 @@ main()
     process.exit(1);
   })
   .finally(async () => {
-    await pool.end();
+    await cerrarConexion();
   });

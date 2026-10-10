@@ -5,22 +5,22 @@ Node.js + Express backend providing multi-tenant authentication, device provisio
 ## Tech Stack
 
 - **Node.js** + **Express**
-- **PostgreSQL** (Azure Database for PostgreSQL Flexible Server or local container)
+- **SQL Server** (Azure SQL Database in production, `mssql`/tedious driver; local container for development)
 - **JWT** (JSON Web Tokens)
 - **Google Auth Library** (`googleapis`)
 - **Samsung Knox Cloud Services API**
-- **Docker** & **Azure Container Apps**
+- **Azure App Service** (production) & **Azure Container Apps** (development)
 
 ## Repository Structure
 
 ```
-├── deploy/azure/deploy.sh      # Azure deployment script (ACR, PostgreSQL, Container Apps)
+├── deploy/azure/deploy.sh      # Container Apps deployment script (development environment)
 ├── scripts/                    # Admin CLI tools (create client, list devices, onboard client)
 ├── secrets/README.md           # Instructions for service account keys
 ├── src/
 │   ├── plataformas.js          # Client ID → Zero-touch / Knox customer detection
 │   ├── config.js               # Centralized configuration & environment loader
-│   ├── db.js                   # PostgreSQL schema & connection pool
+│   ├── db.js                   # SQL Server schema & connection pool
 │   ├── middleware/             # One auth, tenant resolution & rate-limiting
 │   ├── one/                    # Intechsys One client (auth/me, tenants, config)
 │   ├── session/                # /api/v1/sesion and the SSO proxy (/api/v1/sso)
@@ -28,8 +28,8 @@ Node.js + Express backend providing multi-tenant authentication, device provisio
 │   ├── server.js               # Express application entrypoint
 │   └── zerotouch/              # Google Zero-touch client, routes & synchronization
 ├── Dockerfile                  # Production container image definition
-├── docker-compose.yml          # Local PostgreSQL + API orchestration
-└── AZURE_DEPLOY.md             # Complete step-by-step Azure deployment guide
+├── docker-compose.yml          # Local SQL Server + API orchestration
+└── AZURE_DEPLOY.md             # Azure deployment guide (App Service + Azure SQL)
 ```
 
 ## Environment Configuration
@@ -47,19 +47,23 @@ Key variables:
 | `PORT` | Server listening port (default: `8080`) |
 | `NODE_ENV` | `development` or `production` |
 | `JWT_SECRET` | Secret key for signing tokens |
-| `DB_URL` | PostgreSQL connection string |
+| `DB_SERVER`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | SQL Server connection (default: production Azure SQL). Also `DB_PORT`, `DB_ENCRYPT`, `DB_TRUST_SERVER_CERTIFICATE` |
+| `DB_CONNECTION_STRING` | Optional `Server=...;Database=...;User Id=...;Password=...;Encrypt=true`; overrides the `DB_*` values |
 | `ZERO_TOUCH_PARTNER_ID` | Google Zero-touch Partner ID |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | Google service account JSON string or secret |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google service account credentials file |
-| `CORS_ORIGIN` | Allowed CORS origins (`*` or comma-separated domains) |
+| `CORS_ORIGIN` | Allowed CORS origins (`*` or comma-separated domains). Unset: `*` in development; in production the consoles (prod and dev), the One portal and `localhost:5173` |
 
 ## Local Development
 
-### 1. Start PostgreSQL with Docker
+### 1. Start SQL Server with Docker
 
 ```bash
-docker compose up -d postgres
+docker compose up -d sqlserver
 ```
+
+The container creates the `ZeroTouch` database; the API creates its tables on startup. Point the
+API at it with the `DB_*` values from `.env.example` (without them it uses the production database).
 
 ### 2. Install dependencies & run
 
@@ -112,8 +116,7 @@ ID). If a customer's Zero-touch ID differs, set `ZERO_TOUCH_CUSTOMER_ID` for the
 
 ## Azure Production Deployment
 
-To deploy the entire stack to Azure (Container Registry, Flexible Server PostgreSQL, and Container Apps), follow [AZURE_DEPLOY.md](AZURE_DEPLOY.md) or run:
-
-```bash
-./deploy/azure/deploy.sh
-```
+Production runs on Azure App Service (`app-zerotouch-api-prd`) with Azure SQL Database and deploys
+automatically on every push to `main` (`.github/workflows/main_app-zerotouch-api-prd.yml`).
+The development environment (Container Apps) deploys from `develop`. See
+[AZURE_DEPLOY.md](AZURE_DEPLOY.md), including the App Service settings that must be set by hand.

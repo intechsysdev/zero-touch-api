@@ -4,6 +4,9 @@
   "private": true,
   "description": "Backend Node.js para login multi-cliente y puente con Zero Touch",
   "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
@@ -22,7 +25,7 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "knox-token-library-js": "^1.0.22",
-    "pg": "^8.16.3",
+    "mssql": "^11.0.2",
     "zod": "^3.25.76"
   },
   "overrides": {

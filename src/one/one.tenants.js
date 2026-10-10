@@ -14,7 +14,7 @@ async function syncUserTenants(token) {
   // 1. Consultar a One: GET api/v1/me/apps/zero-touch/tenants
   const tenantsFromOne = await listUserAppTenants(token);
 
-  // 2. Sincronizar / auto-provisionar en PostgreSQL
+  // 2. Sincronizar / auto-provisionar en la base de datos
   const syncedClients = await syncOneTenants(tenantsFromOne);
 
   return syncedClients;

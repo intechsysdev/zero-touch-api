@@ -1,4 +1,4 @@
-const { pool } = require('./db');
+const { query } = require('./db');
 const { config } = require('./config');
 const { listCustomers } = require('./zerotouch/zerotouch.client');
 const {
@@ -68,16 +68,20 @@ async function asegurarPlataformas(client, { forzar = false } = {}) {
 
   // Si Google no respondió no se borra lo que ya se sabía: mejor un dato de hace una hora que
   // dejar a la empresa sin plataforma por un corte.
-  const result = await pool.query(
+  const result = await query(
     `
       UPDATE clients
-      SET zero_touch_customer_name = COALESCE($1, zero_touch_customer_name),
-          samsung_customer_id = $2,
-          plataformas_verificadas_at = now()
-      WHERE id = $3
-      RETURNING *
+      SET zero_touch_customer_name = COALESCE(@customerName, zero_touch_customer_name),
+          samsung_customer_id = @samsungCustomerId,
+          plataformas_verificadas_at = SYSUTCDATETIME()
+      OUTPUT INSERTED.*
+      WHERE id = @id
     `,
-    [encontrado.zeroTouchCustomerName, encontrado.samsungCustomerId, client.id]
+    {
+      customerName: encontrado.zeroTouchCustomerName,
+      samsungCustomerId: encontrado.samsungCustomerId,
+      id: String(client.id),
+    }
   );
 
   return result.rows[0] || client;

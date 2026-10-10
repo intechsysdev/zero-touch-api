@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const ONE_DEFAULT_BASE_URL =
-  'https://intechsys-one-api-b5b5a6cbf9emevev.centralus-01.azurewebsites.net';
+  'https://app-intechsysone-api-prd-bxehhkf8dgcwbve9.centralus-01.azurewebsites.net';
 const ONE_DEFAULT_APP_SLUG = 'zero-touch';
 
 const oneConfig = {

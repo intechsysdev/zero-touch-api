@@ -8,7 +8,7 @@ const {
   findDevicesByIdentifier,
   unclaimDevice,
 } = require('./zerotouch.client');
-const { pool, writeAuditLog, getClientByDbId, listClientDevices } = require('../db');
+const { query, writeAuditLog, getClientByDbId, listClientDevices } = require('../db');
 const { syncClientDevices } = require('./zerotouch.sync');
 const { devicesLimiter } = require('../middleware');
 const { getCompanyDynamicConfig } = require('../one');
@@ -160,9 +160,9 @@ async function resolveCustomerIdFromAuth(req) {
       const dynamicConfig = await getCompanyDynamicConfig(client.id);
       if (dynamicConfig?.zeroTouchCustomerName) {
         customerName = dynamicConfig.zeroTouchCustomerName;
-        await pool.query(
-          'UPDATE clients SET zero_touch_customer_name = $1 WHERE id = $2',
-          [customerName, client.id]
+        await query(
+          'UPDATE clients SET zero_touch_customer_name = @customerName WHERE id = @id',
+          { customerName, id: String(client.id) }
         ).catch(() => {});
       }
     } catch (configError) {
@@ -203,9 +203,9 @@ router.put('/customers/link', soloPlataforma, async (req, res, next) => {
     const customerName = `customers/${rawId}`;
     const clientDbId = Number(req.auth.clientDbId);
 
-    await pool.query(
-      'UPDATE clients SET zero_touch_customer_name = $1 WHERE id = $2',
-      [customerName, clientDbId]
+    await query(
+      'UPDATE clients SET zero_touch_customer_name = @customerName WHERE id = @id',
+      { customerName, id: clientDbId }
     );
 
     await writeAuditLog({

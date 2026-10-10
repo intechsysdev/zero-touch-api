@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: intechsys-backend
     restart: unless-stopped
+    # En .env.docker: DB_SERVER=sqlserver, DB_NAME=ZeroTouch, DB_USER=sa,
+    # DB_PASSWORD=ZeroTouch_Local_2026!, DB_TRUST_SERVER_CERTIFICATE=true
     env_file:
       - .env.docker
     volumes:
@@ -12,7 +14,7 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      postgres:
+      sqlserver:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/ready').then(r=>{if(!r.ok) process.exit(1)}).catch(()=>process.exit(1))"]
@@ -20,23 +22,25 @@ services:
       timeout: 5s
       retries: 3
 
-  postgres:
-    image: postgres:16
-    container_name: intechsys-postgres
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: intechsys-sqlserver
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: intechsys_zt
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: "ZeroTouch_Local_2026!"
     ports:
-      - "5432:5432"
+      - "1433:1433"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - mssqldata:/var/opt/mssql
+    # Las tablas las crea el API al arrancar; la base de datos se crea aquí si no existe.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d intechsys_zt"]
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"IF DB_ID('ZeroTouch') IS NULL CREATE DATABASE ZeroTouch\" -b"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 10s
+      retries: 10
+      start_period: 20s
 
 volumes:
-  pgdata:
+  mssqldata:

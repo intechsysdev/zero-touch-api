@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Despliegue en Azure Container Apps (ambiente de desarrollo). Producción corre en App Service
+# (app-zerotouch-api-prd) y se despliega con .github/workflows/main_app-zerotouch-api-prd.yml.
+# La base de datos es SQL Server: este script no la crea, solo le dice al contenedor cómo llegar.
 set -euo pipefail
 
 : "${RESOURCE_GROUP:?RESOURCE_GROUP is required}"
@@ -6,18 +9,17 @@ set -euo pipefail
 : "${ACR_NAME:?ACR_NAME is required}"
 : "${CONTAINER_ENV_NAME:?CONTAINER_ENV_NAME is required}"
 : "${CONTAINER_APP_NAME:?CONTAINER_APP_NAME is required}"
-: "${PG_SERVER_NAME:?PG_SERVER_NAME is required}"
-: "${PG_ADMIN_USER:?PG_ADMIN_USER is required}"
-: "${PG_ADMIN_PASSWORD:?PG_ADMIN_PASSWORD is required}"
-: "${JWT_SECRET:?JWT_SECRET is required}"
+: "${DB_SERVER:?DB_SERVER is required}"
+: "${DB_NAME:?DB_NAME is required}"
+: "${DB_USER:?DB_USER is required}"
+: "${DB_PASSWORD:?DB_PASSWORD is required}"
 : "${ZERO_TOUCH_PARTNER_ID:?ZERO_TOUCH_PARTNER_ID is required}"
 : "${GOOGLE_SERVICE_ACCOUNT_JSON:?GOOGLE_SERVICE_ACCOUNT_JSON is required}"
 
 IMAGE_NAME=${IMAGE_NAME:-intechsys-backend}
 IMAGE_TAG=${IMAGE_TAG:-v1}
-PG_DB_NAME=${PG_DB_NAME:-intechsys_zt}
 CORS_ORIGIN=${CORS_ORIGIN:-*}
-ONE_BASE_URL=${ONE_BASE_URL:-https://intechsys-one-api-b5b5a6cbf9emevev.centralus-01.azurewebsites.net}
+ONE_BASE_URL=${ONE_BASE_URL:-https://app-intechsysone-api-prd-bxehhkf8dgcwbve9.centralus-01.azurewebsites.net}
 ONE_APP_SLUG=${ONE_APP_SLUG:-zero-touch}
 
 az group create -n "$RESOURCE_GROUP" -l "$LOCATION" >/dev/null
@@ -28,23 +30,6 @@ fi
 
 az acr build -r "$ACR_NAME" -t "$IMAGE_NAME:$IMAGE_TAG" .
 
-if ! az postgres flexible-server show -g "$RESOURCE_GROUP" -n "$PG_SERVER_NAME" >/dev/null 2>&1; then
-  az postgres flexible-server create \
-    --resource-group "$RESOURCE_GROUP" \
-    --name "$PG_SERVER_NAME" \
-    --location "$LOCATION" \
-    --admin-user "$PG_ADMIN_USER" \
-    --admin-password "$PG_ADMIN_PASSWORD" \
-    --sku-name Standard_B1ms \
-    --tier Burstable \
-    --storage-size 32 >/dev/null
-fi
-
-az postgres flexible-server db create \
-  --resource-group "$RESOURCE_GROUP" \
-  --server-name "$PG_SERVER_NAME" \
-  --name "$PG_DB_NAME" >/dev/null
-
 if ! az containerapp env show -g "$RESOURCE_GROUP" -n "$CONTAINER_ENV_NAME" >/dev/null 2>&1; then
   az containerapp env create \
     --name "$CONTAINER_ENV_NAME" \
@@ -52,7 +37,6 @@ if ! az containerapp env show -g "$RESOURCE_GROUP" -n "$CONTAINER_ENV_NAME" >/de
     --location "$LOCATION" >/dev/null
 fi
 
-DB_URL="postgres://${PG_ADMIN_USER}:${PG_ADMIN_PASSWORD}@${PG_SERVER_NAME}.postgres.database.azure.com:5432/${PG_DB_NAME}?sslmode=require"
 IMAGE_REF="${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${IMAGE_TAG}"
 
 if ! az containerapp show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP_NAME" >/dev/null 2>&1; then
@@ -67,21 +51,21 @@ if ! az containerapp show -g "$RESOURCE_GROUP" -n "$CONTAINER_APP_NAME" >/dev/nu
     --min-replicas 1 \
     --max-replicas 3 \
     --secrets \
-      jwt-secret="$JWT_SECRET" \
-      db-url="$DB_URL" \
+      db-password="$DB_PASSWORD" \
       google-sa-json="$GOOGLE_SERVICE_ACCOUNT_JSON" \
     --env-vars \
       NODE_ENV=production \
       PORT=8080 \
-      JWT_EXPIRES_IN=8h \
       ZERO_TOUCH_BASE_URL=https://androiddeviceprovisioning.googleapis.com/v1 \
       ZERO_TOUCH_PARTNER_ID="$ZERO_TOUCH_PARTNER_ID" \
       ONE_BASE_URL="$ONE_BASE_URL" \
       ONE_APP_SLUG="$ONE_APP_SLUG" \
       CORS_ORIGIN="$CORS_ORIGIN" \
       TRUST_PROXY=true \
-      JWT_SECRET=secretref:jwt-secret \
-      DB_URL=secretref:db-url \
+      DB_SERVER="$DB_SERVER" \
+      DB_NAME="$DB_NAME" \
+      DB_USER="$DB_USER" \
+      DB_PASSWORD=secretref:db-password \
       GOOGLE_SERVICE_ACCOUNT_JSON=secretref:google-sa-json >/dev/null
 else
   az containerapp update \
@@ -91,28 +75,28 @@ else
     --set-env-vars \
       NODE_ENV=production \
       PORT=8080 \
-      JWT_EXPIRES_IN=8h \
       ZERO_TOUCH_BASE_URL=https://androiddeviceprovisioning.googleapis.com/v1 \
       ZERO_TOUCH_PARTNER_ID="$ZERO_TOUCH_PARTNER_ID" \
       ONE_BASE_URL="$ONE_BASE_URL" \
       ONE_APP_SLUG="$ONE_APP_SLUG" \
       CORS_ORIGIN="$CORS_ORIGIN" \
-      TRUST_PROXY=true >/dev/null
+      TRUST_PROXY=true \
+      DB_SERVER="$DB_SERVER" \
+      DB_NAME="$DB_NAME" \
+      DB_USER="$DB_USER" >/dev/null
 
   az containerapp secret set \
     --name "$CONTAINER_APP_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --secrets \
-      jwt-secret="$JWT_SECRET" \
-      db-url="$DB_URL" \
+      db-password="$DB_PASSWORD" \
       google-sa-json="$GOOGLE_SERVICE_ACCOUNT_JSON" >/dev/null
 
   az containerapp update \
     --name "$CONTAINER_APP_NAME" \
     --resource-group "$RESOURCE_GROUP" \
     --set-env-vars \
-      JWT_SECRET=secretref:jwt-secret \
-      DB_URL=secretref:db-url \
+      DB_PASSWORD=secretref:db-password \
       GOOGLE_SERVICE_ACCOUNT_JSON=secretref:google-sa-json >/dev/null
 fi
 

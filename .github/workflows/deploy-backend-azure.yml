@@ -32,7 +32,7 @@ jobs:
           JWT_SECRET: ci_test_jwt_secret_value_12345
           DB_URL: postgres://postgres:postgres@localhost:5432/intechsys_zt
           ZERO_TOUCH_PARTNER_ID: '1450835637'
-          ONE_BASE_URL: https://intechsys-one-api-b5b5a6cbf9emevev.centralus-01.azurewebsites.net
+          ONE_BASE_URL: https://app-intechsysone-api-prd-bxehhkf8dgcwbve9.centralus-01.azurewebsites.net
           ONE_APP_SLUG: zero-touch
 
       - name: Azure Login
