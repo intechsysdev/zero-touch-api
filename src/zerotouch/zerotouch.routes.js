@@ -12,6 +12,7 @@ const { query, writeAuditLog, getClientByDbId, listClientDevices } = require('..
 const { syncClientDevices } = require('./zerotouch.sync');
 const { devicesLimiter } = require('../middleware');
 const { getCompanyDynamicConfig } = require('../one');
+const { asegurarPlataformas } = require('../plataformas');
 
 const router = express.Router();
 
@@ -145,7 +146,7 @@ function buildIdentifierPreview(identifier) {
  */
 async function resolveCustomerIdFromAuth(req) {
   const clientDbId = Number(req.auth.clientDbId);
-  const client = await getClientByDbId(clientDbId);
+  let client = await getClientByDbId(clientDbId);
 
   if (!client || !client.is_active) {
     const error = new Error('Cliente inactivo o no encontrado.');
@@ -155,6 +156,7 @@ async function resolveCustomerIdFromAuth(req) {
 
   let customerName = client.zero_touch_customer_name || '';
 
+  // Fallback 1: intentar la variable ZERO_TOUCH_CUSTOMER_ID configurada en One.
   if (!customerName) {
     try {
       const dynamicConfig = await getCompanyDynamicConfig(client.id);
@@ -167,6 +169,20 @@ async function resolveCustomerIdFromAuth(req) {
       }
     } catch (configError) {
       console.warn('No se pudo obtener config de One:', configError.message);
+    }
+  }
+
+  // Fallback 2: consultar Google directamente y guardar el resultado.
+  // Cubre el caso en que el middleware no pudo correr o falló silenciosamente.
+  if (!customerName) {
+    try {
+      const actualizado = await asegurarPlataformas(client, { forzar: true });
+      customerName = actualizado.zero_touch_customer_name || '';
+      if (customerName) {
+        client = actualizado;
+      }
+    } catch (detectError) {
+      console.warn('No se pudo detectar plataformas desde resolveCustomerIdFromAuth:', detectError.message);
     }
   }
 
