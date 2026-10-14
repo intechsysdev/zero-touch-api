@@ -59,10 +59,14 @@ async function detectarPlataformas(clientId) {
 async function asegurarPlataformas(client, { forzar = false } = {}) {
   if (!client?.id || !client.client_id) return client;
 
+  // Si ya tiene datos y el caché es reciente no se vuelve a consultar.
+  // Si zero_touch_customer_name está vacío se fuerza siempre la detección:
+  // el caché de 1 hora solo protege datos que ya existen.
+  const sinDatos = !client.zero_touch_customer_name;
   const verificadas = client.plataformas_verificadas_at
     ? new Date(client.plataformas_verificadas_at).getTime()
     : 0;
-  if (!forzar && Date.now() - verificadas < VIGENCIA_MS) return client;
+  if (!forzar && !sinDatos && Date.now() - verificadas < VIGENCIA_MS) return client;
 
   const encontrado = await detectarPlataformas(client.client_id);
 
