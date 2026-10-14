@@ -38,6 +38,24 @@ function parseCsv(value) {
 
 const nodeEnv = process.env.NODE_ENV || 'development';
 
+function findGoogleCredentialsFile() {
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    return process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  }
+  const fs = require('fs');
+  const path = require('path');
+  const candidatos = [
+    path.join(__dirname, '../secrets/google-service-account.json'),
+    path.join(process.cwd(), 'secrets/google-service-account.json'),
+  ];
+  for (const c of candidatos) {
+    try {
+      if (fs.existsSync(c)) return c;
+    } catch {}
+  }
+  return '';
+}
+
 const config = {
   nodeEnv,
   port: Number(process.env.PORT || 8080),
@@ -70,7 +88,7 @@ const config = {
   rateLimitWindowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
   rateLimitMaxRequests: Number(process.env.RATE_LIMIT_MAX || 300),
   googleServiceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '',
-  googleApplicationCredentials: process.env.GOOGLE_APPLICATION_CREDENTIALS || '',
+  googleApplicationCredentials: findGoogleCredentialsFile(),
   demoZeroTouchCustomerId: process.env.DEMO_ZERO_TOUCH_CUSTOMER_ID || '1791589702',
   oneBaseUrl:
     process.env.ONE_BASE_URL ||

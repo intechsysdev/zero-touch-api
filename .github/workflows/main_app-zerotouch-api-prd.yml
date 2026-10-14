@@ -42,10 +42,20 @@ jobs:
       - name: Install production dependencies only
         run: npm ci --omit=dev
 
+      # Si el secreto GOOGLE_SERVICE_ACCOUNT_JSON existe en GitHub Secrets, inyectarlo en secrets/
+      - name: Inject Google credentials into package
+        env:
+          GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SA_JSON" ]; then
+            mkdir -p secrets
+            echo "$GOOGLE_SA_JSON" > secrets/google-service-account.json
+          fi
+
       # App Service ejecuta "npm start" sobre lo que se despliega: va con node_modules incluido
       # para no depender de que compile en el servidor.
       - name: Zip artifact for deployment
-        run: zip -r -q release.zip package.json package-lock.json src node_modules
+        run: zip -r -q release.zip package.json package-lock.json src node_modules secrets
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -72,6 +82,19 @@ jobs:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_103BD05C1F974484A74082B4B009F8AE }}
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_26C5FDE9E26849218002E621D0530998 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_410C196EC0AD406587EC7E4B5F2E2FEC }}
+
+      - name: Configure App Service Settings
+        env:
+          GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SA_JSON" ]; then
+            echo "$GOOGLE_SA_JSON" > /tmp/sa.json
+            az webapp config appsettings set \
+              --name 'app-zerotouch-api-prd' \
+              --settings "GOOGLE_SERVICE_ACCOUNT_JSON=@/tmp/sa.json" \
+              --output none || true
+            rm -f /tmp/sa.json
+          fi
 
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
