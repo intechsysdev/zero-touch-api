@@ -174,20 +174,32 @@ async function resolveCustomerIdFromAuth(req) {
 
   // Fallback 2: consultar Google directamente y guardar el resultado.
   // Cubre el caso en que el middleware no pudo correr o falló silenciosamente.
+  let errorConsulta = null;
   if (!customerName) {
     try {
       const actualizado = await asegurarPlataformas(client, { forzar: true });
       customerName = actualizado.zero_touch_customer_name || '';
+      if (actualizado._zeroTouchError) {
+        errorConsulta = actualizado._zeroTouchError;
+      }
       if (customerName) {
         client = actualizado;
       }
     } catch (detectError) {
+      errorConsulta = detectError.message;
       console.warn('No se pudo detectar plataformas desde resolveCustomerIdFromAuth:', detectError.message);
     }
   }
 
   const customerId = String(customerName).split('/').pop();
   if (!customerId) {
+    if (errorConsulta) {
+      const error = new Error(
+        `Error al consultar Google Zero-touch para "${client.company_name}": ${errorConsulta}`
+      );
+      error.statusCode = 502;
+      throw error;
+    }
     const error = new Error(
       `El Client ID ${client.client_id} de "${client.company_name}" no existe en Zero-touch. Revise la variable de la empresa en One.`
     );

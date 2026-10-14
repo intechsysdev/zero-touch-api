@@ -67,14 +67,39 @@ app.get(['/health', '/api/v1/salud'], (req, res) => {
   });
 });
 
-// Readiness probe con verificación de base de datos
+// Readiness probe con verificación de base de datos y Google Zero-touch
 app.get('/ready', async (req, res) => {
+  let dbStatus = 'down';
   try {
     await checkDatabaseConnection();
-    res.json({ ok: true, db: 'up' });
+    dbStatus = 'up';
   } catch (error) {
-    res.status(503).json({ ok: false, db: 'down' });
+    dbStatus = error.message;
   }
+
+  let googleStatus = 'ok';
+  let googleError = null;
+  let customersCount = 0;
+  try {
+    const { listCustomers } = require('./zerotouch/zerotouch.client');
+    const data = await listCustomers();
+    customersCount = Array.isArray(data.customers) ? data.customers.length : 0;
+  } catch (error) {
+    googleStatus = 'error';
+    googleError = error.message;
+  }
+
+  const isOk = dbStatus === 'up' && googleStatus === 'ok';
+  res.status(isOk ? 200 : 503).json({
+    ok: isOk,
+    db: dbStatus,
+    google: {
+      status: googleStatus,
+      configured: Boolean(config.googleServiceAccountJson?.trim() || config.googleApplicationCredentials?.trim()),
+      customersCount,
+      error: googleError,
+    },
+  });
 });
 
 // ══════════════════════════════════════════════

@@ -25,11 +25,13 @@ async function detectarPlataformas(clientId) {
   }
 
   let cliente = null;
+  let zeroTouchError = null;
   try {
     const data = await listCustomers();
     const clientes = Array.isArray(data.customers) ? data.customers : [];
     cliente = clientes.find((c) => String(c.companyId || '').trim() === id) || null;
   } catch (error) {
+    zeroTouchError = error.message;
     console.warn(`No se pudo consultar Zero-touch para el Client ID ${id}:`, error.message);
   }
 
@@ -49,6 +51,7 @@ async function detectarPlataformas(clientId) {
     zeroTouchCustomerName: cliente?.name ? String(cliente.name) : null,
     companyName: cliente?.companyName ? String(cliente.companyName) : null,
     samsungCustomerId,
+    zeroTouchError,
   };
 }
 
@@ -88,7 +91,11 @@ async function asegurarPlataformas(client, { forzar = false } = {}) {
     }
   );
 
-  return result.rows[0] || client;
+  const updated = result.rows[0] || client;
+  if (encontrado.zeroTouchError) {
+    updated._zeroTouchError = encontrado.zeroTouchError;
+  }
+  return updated;
 }
 
 /** Lo que la consola necesita saber de las plataformas de una empresa. */
