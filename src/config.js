@@ -22,6 +22,7 @@ function parseCorsOrigins(value) {
 const ORIGENES_PRODUCCION = [
   'https://happy-desert-04a62e310.3.azurestaticapps.net',
   'https://witty-mushroom-070e3901e.6.azurestaticapps.net',
+  'https://intechsysone.com',
   'https://jolly-pond-0e51aed10.3.azurestaticapps.net',
   'http://localhost:5173',
 ];
