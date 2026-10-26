@@ -13,7 +13,6 @@ const { syncClientDevices } = require('./zerotouch.sync');
 const { devicesLimiter } = require('../middleware');
 const { getCompanyDynamicConfig } = require('../one');
 const { asegurarPlataformas } = require('../plataformas');
-const { resolveDeviceInfoFromImei } = require('./tac-resolver');
 const { importGoogleCsv } = require('./csv-import');
 
 const router = express.Router();
@@ -81,26 +80,13 @@ async function buscarEquipoDelCliente(customerId, deviceIdentifier) {
 function resumenEquipo(device, customerId) {
   const id = device.deviceIdentifier || {};
   const reclamo = reclamoDelCliente(device, customerId) || {};
-  let manufacturer = id.manufacturer || null;
-  let model = id.model || null;
-
-  if (id.imei && (!manufacturer || !model || model === 'Dispositivo' || manufacturer === 'N/A')) {
-    const resolved = resolveDeviceInfoFromImei(id.imei);
-    if (resolved.manufacturer && (!manufacturer || manufacturer === 'N/A')) {
-      manufacturer = resolved.manufacturer;
-    }
-    if (resolved.model && (!model || model === 'Dispositivo')) {
-      model = resolved.model;
-    }
-  }
-
   return {
     deviceId: device.deviceId,
     name: device.name,
     imei: id.imei || null,
     serialNumber: id.serialNumber || null,
-    manufacturer,
-    model,
+    manufacturer: id.manufacturer || null,
+    model: id.model || null,
     configuration: device.configuration || null,
     ownerCompanyId: reclamo.ownerCompanyId || null,
     resellerId: reclamo.resellerId || null,
@@ -389,20 +375,10 @@ router.get('/devices', async (req, res, next) => {
         payload.deviceIdentifier.serialNumber = item.serial_number;
       }
 
-      let mfr = payload.deviceIdentifier.manufacturer || item.manufacturer;
-      let mdl = payload.deviceIdentifier.model || item.model;
+      let mfr = item.manufacturer || payload.deviceIdentifier.manufacturer;
+      let mdl = item.model || payload.deviceIdentifier.model;
 
-      if (!mfr || !mdl || mdl === 'Dispositivo' || mfr === 'N/A') {
-        const resolved = resolveDeviceInfoFromImei(payload.deviceIdentifier.imei || item.imei);
-        if (resolved.manufacturer && (!mfr || mfr === 'N/A')) {
-          mfr = resolved.manufacturer;
-        }
-        if (resolved.model && (!mdl || mdl === 'Dispositivo')) {
-          mdl = resolved.model;
-        }
-      }
-
-      payload.deviceIdentifier.manufacturer = mfr || 'Android';
+      payload.deviceIdentifier.manufacturer = mfr || 'N/A';
       payload.deviceIdentifier.model = mdl || 'Dispositivo';
 
       // Asegurar fecha para evitar que la UI muestre '-'
@@ -445,28 +421,6 @@ router.get('/devices', async (req, res, next) => {
 });
 
 /**
- * Resuelve fabricante y modelo a partir del IMEI consultando el catálogo de homologación TAC.
- * GET /zerotouch/devices/resolve-imei?imei=354555937928120
- */
-router.get('/devices/resolve-imei', async (req, res) => {
-  const cleanImei = String(req.query.imei || '').trim().replace(/\D/g, '');
-  if (!cleanImei || cleanImei.length < 8) {
-    return res.status(400).json({
-      message: 'Indique un IMEI válido de al menos 8 dígitos.',
-    });
-  }
-
-  const resolved = resolveDeviceInfoFromImei(cleanImei);
-  res.json({
-    imei: cleanImei,
-    tac: cleanImei.slice(0, 8),
-    manufacturer: resolved.manufacturer || 'Desconocido',
-    model: resolved.model || 'Dispositivo Android',
-    resolved: Boolean(resolved.manufacturer),
-  });
-});
-
-/**
  * Importa el CSV exportado desde el portal de Google Zero-touch para actualizar
  * el modelo y fabricante de los dispositivos en la base de datos.
  *
@@ -479,7 +433,8 @@ router.get('/devices/resolve-imei', async (req, res) => {
  */
 router.post('/devices/import-csv', soloPlataforma, async (req, res, next) => {
   try {
-    const clientDbId = Number(req.auth.clientDbId);
+    const allCompanies = String(req.query.all || '').toLowerCase() === 'true';
+    const clientDbId = allCompanies ? 0 : Number(req.auth.clientDbId || 0);
 
     let csvText = '';
     if (typeof req.body === 'string') {
@@ -572,20 +527,10 @@ router.get('/devices/identifier-options', async (req, res, next) => {
           : item.raw_payload_json || {};
       const identifier = payload.deviceIdentifier || {};
 
-      let manufacturer = String(
+      const manufacturer = String(
         item.manufacturer || identifier.manufacturer || ''
       ).trim();
-      let model = String(item.model || identifier.model || '').trim();
-
-      if (!manufacturer || !model || model === 'Dispositivo' || manufacturer === 'N/A') {
-        const resolved = resolveDeviceInfoFromImei(identifier.imei || item.imei);
-        if (resolved.manufacturer && (!manufacturer || manufacturer === 'N/A')) {
-          manufacturer = resolved.manufacturer;
-        }
-        if (resolved.model && (!model || model === 'Dispositivo')) {
-          model = resolved.model;
-        }
-      }
+      const model = String(item.model || identifier.model || '').trim();
 
       if (!manufacturer || manufacturer === 'N/A') {
         continue;

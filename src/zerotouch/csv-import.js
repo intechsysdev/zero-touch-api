@@ -12,8 +12,7 @@
  * El CSV puede traer también columnas extra que se ignoran silenciosamente.
  */
 
-const { query } = require('../db');
-const sql = require('mssql');
+const { query, sql } = require('../db');
 
 /**
  * Parsea un CSV simple (RFC-4180): maneja comillas dobles y saltos dentro de campos.
@@ -170,11 +169,11 @@ async function importGoogleCsv(clientDbId, csvText) {
             model        = COALESCE(@model, model),
             synced_at    = COALESCE(TRY_CONVERT(DATETIME2, @dateAdded), synced_at),
             updated_at   = SYSUTCDATETIME()
-          WHERE client_db_id = @clientDbId
+          WHERE (@clientDbId IS NULL OR @clientDbId = 0 OR client_db_id = @clientDbId)
             AND imei = @imei
           `,
           {
-            clientDbId: { tipo: sql.Int, valor: Number(clientDbId) },
+            clientDbId: { tipo: sql.Int, valor: Number(clientDbId) || 0 },
             imei: { tipo: sql.NVarChar(50), valor: imei },
             manufacturer: { tipo: sql.NVarChar(200), valor: manufacturer },
             model: { tipo: sql.NVarChar(200), valor: model },
@@ -193,11 +192,11 @@ async function importGoogleCsv(clientDbId, csvText) {
             model        = COALESCE(@model, model),
             synced_at    = COALESCE(TRY_CONVERT(DATETIME2, @dateAdded), synced_at),
             updated_at   = SYSUTCDATETIME()
-          WHERE client_db_id = @clientDbId
+          WHERE (@clientDbId IS NULL OR @clientDbId = 0 OR client_db_id = @clientDbId)
             AND serial_number = @serial
           `,
           {
-            clientDbId: { tipo: sql.Int, valor: Number(clientDbId) },
+            clientDbId: { tipo: sql.Int, valor: Number(clientDbId) || 0 },
             serial: { tipo: sql.NVarChar(200), valor: serial },
             manufacturer: { tipo: sql.NVarChar(200), valor: manufacturer },
             model: { tipo: sql.NVarChar(200), valor: model },
