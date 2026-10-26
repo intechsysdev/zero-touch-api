@@ -12,6 +12,7 @@
     "dev": "node --watch src/server.js",
     "healthcheck": "node -e \"fetch('http://localhost:' + (process.env.PORT || 8080) + '/health').then(r=>{if(!r.ok) process.exit(1)}).catch(()=>process.exit(1))\"",
     "zerotouch:devices": "node scripts/list_zerotouch_devices.js",
+    "zerotouch:import-csv": "node scripts/import_google_csv.js",
     "admin:onboard-client": "node scripts/admin_onboard_client.js",
     "admin:create-client-user": "node scripts/admin_create_client_user.js"
   },
