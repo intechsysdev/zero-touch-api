@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const sql = require('mssql');
 const { config } = require('./config');
+const { resolveDeviceInfoFromImei } = require('./zerotouch/tac-resolver');
 
 /**
  * Conexión a SQL Server (Azure SQL Database en producción) con el driver tedious de `mssql`.
@@ -357,8 +358,30 @@ async function replaceClientDevices(clientDbId, devices) {
       const deviceId = raw.deviceId || raw.name || null;
       const serialNumber = identifier.serialNumber || raw.serialNumber || null;
       const imei = identifier.imei || raw.imei || null;
-      const model = identifier.model || raw.model || null;
-      const manufacturer = identifier.manufacturer || raw.manufacturer || null;
+      let model = identifier.model || raw.model || null;
+      let manufacturer = identifier.manufacturer || raw.manufacturer || null;
+
+      if (imei && (!model || !manufacturer || model === 'Dispositivo' || manufacturer === 'N/A')) {
+        const resolved = resolveDeviceInfoFromImei(imei);
+        if (resolved.manufacturer && (!manufacturer || manufacturer === 'N/A')) {
+          manufacturer = resolved.manufacturer;
+        }
+        if (resolved.model && (!model || model === 'Dispositivo')) {
+          model = resolved.model;
+        }
+      }
+
+      if (raw.deviceIdentifier) {
+        if (manufacturer && !raw.deviceIdentifier.manufacturer) {
+          raw.deviceIdentifier.manufacturer = manufacturer;
+        }
+        if (model && !raw.deviceIdentifier.model) {
+          raw.deviceIdentifier.model = model;
+        }
+      }
+      if (Array.isArray(raw.claims) && raw.claims.length > 0 && !raw.claims[0].createTime) {
+        raw.claims[0].createTime = new Date().toISOString();
+      }
 
       // Si la lista trae dos veces el mismo equipo, el último gana (como el ON CONFLICT de antes).
       await query(
