@@ -12,7 +12,15 @@
  * El CSV puede traer también columnas extra que se ignoran silenciosamente.
  */
 
-const { query, sql } = require('../db');
+let dbModule = null;
+function getDb() {
+  if (!dbModule) {
+    try {
+      dbModule = require('../db');
+    } catch (_) {}
+  }
+  return dbModule;
+}
 const { learnFromCsvRows, normalizeManufacturer } = require('./device-catalog');
 
 /**
@@ -142,8 +150,13 @@ async function importGoogleCsv(clientDbId, csvText) {
       // Intentar actualizar por IMEI primero, luego por serial
       let rowsAffected = 0;
 
+      const db = getDb();
+      if (!db) {
+        throw new Error('Base de datos no disponible');
+      }
+
       if (imei) {
-        const result = await query(
+        const result = await db.query(
           `
           UPDATE client_devices
           SET
@@ -155,18 +168,18 @@ async function importGoogleCsv(clientDbId, csvText) {
             AND imei = @imei
           `,
           {
-            clientDbId: { tipo: sql.Int, valor: Number(clientDbId) || 0 },
-            imei: { tipo: sql.NVarChar(50), valor: imei },
-            manufacturer: { tipo: sql.NVarChar(200), valor: manufacturer },
-            model: { tipo: sql.NVarChar(200), valor: model },
-            dateAdded: { tipo: sql.NVarChar(50), valor: dateAdded },
+            clientDbId: { tipo: db.sql.Int, valor: Number(clientDbId) || 0 },
+            imei: { tipo: db.sql.NVarChar(50), valor: imei },
+            manufacturer: { tipo: db.sql.NVarChar(200), valor: manufacturer },
+            model: { tipo: db.sql.NVarChar(200), valor: model },
+            dateAdded: { tipo: db.sql.NVarChar(50), valor: dateAdded },
           }
         );
         rowsAffected = result.rowsAffected || 0;
       }
 
       if (!rowsAffected && serial) {
-        const result = await query(
+        const result = await db.query(
           `
           UPDATE client_devices
           SET
@@ -178,11 +191,11 @@ async function importGoogleCsv(clientDbId, csvText) {
             AND serial_number = @serial
           `,
           {
-            clientDbId: { tipo: sql.Int, valor: Number(clientDbId) || 0 },
-            serial: { tipo: sql.NVarChar(200), valor: serial },
-            manufacturer: { tipo: sql.NVarChar(200), valor: manufacturer },
-            model: { tipo: sql.NVarChar(200), valor: model },
-            dateAdded: { tipo: sql.NVarChar(50), valor: dateAdded },
+            clientDbId: { tipo: db.sql.Int, valor: Number(clientDbId) || 0 },
+            serial: { tipo: db.sql.NVarChar(200), valor: serial },
+            manufacturer: { tipo: db.sql.NVarChar(200), valor: manufacturer },
+            model: { tipo: db.sql.NVarChar(200), valor: model },
+            dateAdded: { tipo: db.sql.NVarChar(50), valor: dateAdded },
           }
         );
         rowsAffected = result.rowsAffected || 0;
