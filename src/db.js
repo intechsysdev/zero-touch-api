@@ -181,6 +181,16 @@ const ESQUEMA = [
       CONSTRAINT uq_client_devices_external_key UNIQUE (client_db_id, external_key)
     );
   `,
+  `
+    IF OBJECT_ID(N'dbo.device_model_catalog', N'U') IS NULL
+    CREATE TABLE dbo.device_model_catalog (
+      tac NVARCHAR(8) NOT NULL PRIMARY KEY,
+      manufacturer NVARCHAR(200) NOT NULL,
+      model NVARCHAR(200) NOT NULL,
+      source NVARCHAR(50) NOT NULL CONSTRAINT df_device_catalog_source DEFAULT 'google_csv',
+      updated_at DATETIME2 NOT NULL CONSTRAINT df_device_catalog_updated_at DEFAULT SYSUTCDATETIME()
+    );
+  `,
   // Columnas agregadas después (soporte multi-tenant de One y plataformas del Client ID)
   ...[
     ['one_tenant_id', 'UNIQUEIDENTIFIER NULL'],
@@ -349,28 +359,55 @@ async function replaceClientDevices(clientDbId, devices) {
   const transaccion = new sql.Transaction(pool);
   await transaccion.begin();
   try {
-    await query('DELETE FROM client_devices WHERE client_db_id = @clientDbId', { clientDbId: idBd(clientDbId) }, transaccion);
+    const validKeys = [];
 
     for (const raw of devices) {
       const identifier = raw.deviceIdentifier || {};
       const externalKey = buildExternalKey(raw);
+      validKeys.push(externalKey);
+
       const deviceId = raw.deviceId || raw.name || null;
       const serialNumber = identifier.serialNumber || raw.serialNumber || null;
       const imei = identifier.imei || raw.imei || null;
-      const model = identifier.model || raw.model || null;
-      const manufacturer = identifier.manufacturer || raw.manufacturer || null;
+      let model = identifier.model || raw.model || null;
+      let manufacturer = identifier.manufacturer || raw.manufacturer || null;
 
-      // Si la lista trae dos veces el mismo equipo, el último gana (como el ON CONFLICT de antes).
+      // Si Google no devuelve modelo/fabricante pero tenemos IMEI, resolver desde el catálogo aprendido
+      if (imei && (!model || !manufacturer || model === 'Dispositivo' || manufacturer === 'N/A')) {
+        try {
+          const { resolveModelFromImei } = require('./zerotouch/device-catalog');
+          const learned = resolveModelFromImei(imei);
+          if (learned) {
+            if (!manufacturer || manufacturer === 'N/A') manufacturer = learned.manufacturer;
+            if (!model || model === 'Dispositivo') model = learned.model;
+          }
+        } catch (_) {}
+      }
+
+      if (raw.deviceIdentifier) {
+        if (manufacturer && !raw.deviceIdentifier.manufacturer) {
+          raw.deviceIdentifier.manufacturer = manufacturer;
+        }
+        if (model && !raw.deviceIdentifier.model) {
+          raw.deviceIdentifier.model = model;
+        }
+      }
+
+      if (Array.isArray(raw.claims) && raw.claims.length > 0 && !raw.claims[0].createTime) {
+        raw.claims[0].createTime = new Date().toISOString();
+      }
+
+      // Si el equipo ya existía y tenía model/manufacturer (ej. por importación CSV),
+      // COALESCE(@model, model) preserva el valor existente en lugar de sobreescribirlo con NULL.
       await query(
         `
           UPDATE client_devices
           SET device_id = @deviceId,
               serial_number = @serialNumber,
               imei = @imei,
-              model = @model,
-              manufacturer = @manufacturer,
+              model = COALESCE(@model, model),
+              manufacturer = COALESCE(@manufacturer, manufacturer),
               raw_payload_json = @rawPayload,
-              synced_at = SYSUTCDATETIME(),
               updated_at = SYSUTCDATETIME()
           WHERE client_db_id = @clientDbId AND external_key = @externalKey;
 
@@ -402,6 +439,47 @@ async function replaceClientDevices(clientDbId, devices) {
           manufacturer: { tipo: sql.NVarChar(200), valor: manufacturer },
           rawPayload: { tipo: sql.NVarChar(sql.MAX), valor: JSON.stringify(raw) },
         },
+        transaccion
+      );
+    }
+
+    // Eliminar solo los equipos de este cliente que ya no existen en Zero-touch
+    if (validKeys.length === 0) {
+      await query(
+        'DELETE FROM client_devices WHERE client_db_id = @clientDbId',
+        { clientDbId: idBd(clientDbId) },
+        transaccion
+      );
+    } else {
+      await query(
+        'CREATE TABLE #SyncedKeys (k NVARCHAR(450) COLLATE Latin1_General_BIN NOT NULL PRIMARY KEY);',
+        {},
+        transaccion
+      );
+
+      // Insertar en lotes de 100
+      for (let i = 0; i < validKeys.length; i += 100) {
+        const batch = validKeys.slice(i, i + 100);
+        const values = batch.map((_, idx) => `(@k${idx})`).join(', ');
+        const params = {};
+        batch.forEach((k, idx) => {
+          params[`k${idx}`] = { tipo: sql.NVarChar(450), valor: k };
+        });
+        await query(
+          `INSERT INTO #SyncedKeys (k) VALUES ${values};`,
+          params,
+          transaccion
+        );
+      }
+
+      await query(
+        `
+          DELETE FROM client_devices
+          WHERE client_db_id = @clientDbId
+            AND external_key NOT IN (SELECT k FROM #SyncedKeys);
+          DROP TABLE #SyncedKeys;
+        `,
+        { clientDbId: idBd(clientDbId) },
         transaccion
       );
     }

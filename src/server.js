@@ -50,6 +50,9 @@ app.use(
 // Paso 4: Parsing JSON del cuerpo de las peticiones
 app.use(express.json());
 
+// Soporte para Content-Type: text/plain (usado al importar CSV de Google Zero-touch)
+app.use(express.text({ type: 'text/plain', limit: '10mb' }));
+
 // Paso 5: Rate Limiting Global
 app.use(generalLimiter);
 
@@ -150,6 +153,10 @@ app.use((error, req, res, next) => {
 
 async function start() {
   await initDatabase();
+  try {
+    const { loadCatalogFromDb } = require('./zerotouch/device-catalog');
+    await loadCatalogFromDb();
+  } catch (_) {}
   app.listen(config.port, () => {
     console.log(`ZeroTouch API running on http://localhost:${config.port}`);
   });
