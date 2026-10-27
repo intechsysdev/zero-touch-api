@@ -123,92 +123,98 @@ async function importGoogleCsv(clientDbId, csvText) {
   let unmatched = 0;
   const errors = [];
 
-  for (const row of rows) {
-    try {
-      const imei = (row['imei'] || row['modemid'] || '').replace(/\D/g, '').slice(0, 15) || null;
-      const serial = row['serialnumber'] || row['serial'] || null;
-      // Google puede poner el fabricante en "manufacturer" o en "derivedmanufacturer"
-      const rawMfr = row['manufacturer'] || row['derivedmanufacturer'] || null;
-      const manufacturer = normalizeManufacturer(rawMfr);
-      const model = row['model'] || row['derivedmodel'] || null;
+  const BATCH_SIZE = 15;
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const chunk = rows.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      chunk.map(async (row) => {
+        try {
+          const imei = (row['imei'] || row['modemid'] || '').replace(/\D/g, '').slice(0, 15) || null;
+          const serial = row['serialnumber'] || row['serial'] || null;
+          // Google puede poner el fabricante en "manufacturer" o en "derivedmanufacturer"
+          const rawMfr = row['manufacturer'] || row['derivedmanufacturer'] || null;
+          const manufacturer = normalizeManufacturer(rawMfr);
+          const model = row['model'] || row['derivedmodel'] || null;
 
-      // Fecha de adición/creación en Google Zero-touch (columna 'datetimeaddedutc')
-      const rawDate = row['datetimeaddedutc'] || row['dateadded'] || row['createdtime'] || row['created'] || null;
-      let dateAdded = null;
-      if (rawDate) {
-        const d = new Date(rawDate.includes('T') ? rawDate : rawDate.replace(' ', 'T') + 'Z');
-        if (!isNaN(d.getTime())) {
-          dateAdded = d.toISOString();
+          // Fecha de adición/creación en Google Zero-touch (columna 'datetimeaddedutc')
+          const rawDate = row['datetimeaddedutc'] || row['dateadded'] || row['createdtime'] || row['created'] || null;
+          let dateAdded = null;
+          if (rawDate) {
+            const d = new Date(rawDate.includes('T') ? rawDate : rawDate.replace(' ', 'T') + 'Z');
+            if (!isNaN(d.getTime())) {
+              dateAdded = d.toISOString();
+            }
+          }
+
+          if (!imei && !serial) {
+            skipped++;
+            return;
+          }
+
+          if (!manufacturer && !model && !dateAdded) {
+            skipped++;
+            return;
+          }
+
+          // Intentar actualizar por IMEI primero, luego por serial
+          let rowsAffected = 0;
+
+          if (imei) {
+            const result = await db.query(
+              `
+              UPDATE client_devices
+              SET
+                manufacturer = COALESCE(@manufacturer, manufacturer),
+                model        = COALESCE(@model, model),
+                synced_at    = COALESCE(TRY_CONVERT(DATETIME2, @dateAdded), synced_at),
+                updated_at   = SYSUTCDATETIME()
+              WHERE (@clientDbId IS NULL OR @clientDbId = 0 OR client_db_id = @clientDbId)
+                AND imei = @imei
+              `,
+              {
+                clientDbId: { tipo: db.sql.Int, valor: Number(clientDbId) || 0 },
+                imei: { tipo: db.sql.NVarChar(50), valor: imei },
+                manufacturer: { tipo: db.sql.NVarChar(200), valor: manufacturer },
+                model: { tipo: db.sql.NVarChar(200), valor: model },
+                dateAdded: { tipo: db.sql.NVarChar(50), valor: dateAdded },
+              }
+            );
+            rowsAffected = result.rowsAffected || 0;
+          }
+
+          if (!rowsAffected && serial) {
+            const result = await db.query(
+              `
+              UPDATE client_devices
+              SET
+                manufacturer = COALESCE(@manufacturer, manufacturer),
+                model        = COALESCE(@model, model),
+                synced_at    = COALESCE(TRY_CONVERT(DATETIME2, @dateAdded), synced_at),
+                updated_at   = SYSUTCDATETIME()
+              WHERE (@clientDbId IS NULL OR @clientDbId = 0 OR client_db_id = @clientDbId)
+                AND serial_number = @serial
+              `,
+              {
+                clientDbId: { tipo: db.sql.Int, valor: Number(clientDbId) || 0 },
+                serial: { tipo: db.sql.NVarChar(200), valor: serial },
+                manufacturer: { tipo: db.sql.NVarChar(200), valor: manufacturer },
+                model: { tipo: db.sql.NVarChar(200), valor: model },
+                dateAdded: { tipo: db.sql.NVarChar(50), valor: dateAdded },
+              }
+            );
+            rowsAffected = result.rowsAffected || 0;
+          }
+
+          if (rowsAffected > 0) {
+            updated++;
+          } else {
+            unmatched++;
+          }
+        } catch (err) {
+          errors.push(`Row error: ${err.message}`);
         }
-      }
-
-      if (!imei && !serial) {
-        skipped++;
-        continue;
-      }
-
-      if (!manufacturer && !model && !dateAdded) {
-        skipped++;
-        continue;
-      }
-
-      // Intentar actualizar por IMEI primero, luego por serial
-      let rowsAffected = 0;
-
-      if (imei) {
-        const result = await db.query(
-          `
-          UPDATE client_devices
-          SET
-            manufacturer = COALESCE(@manufacturer, manufacturer),
-            model        = COALESCE(@model, model),
-            synced_at    = COALESCE(TRY_CONVERT(DATETIME2, @dateAdded), synced_at),
-            updated_at   = SYSUTCDATETIME()
-          WHERE (@clientDbId IS NULL OR @clientDbId = 0 OR client_db_id = @clientDbId)
-            AND imei = @imei
-          `,
-          {
-            clientDbId: { tipo: db.sql.Int, valor: Number(clientDbId) || 0 },
-            imei: { tipo: db.sql.NVarChar(50), valor: imei },
-            manufacturer: { tipo: db.sql.NVarChar(200), valor: manufacturer },
-            model: { tipo: db.sql.NVarChar(200), valor: model },
-            dateAdded: { tipo: db.sql.NVarChar(50), valor: dateAdded },
-          }
-        );
-        rowsAffected = result.rowsAffected || 0;
-      }
-
-      if (!rowsAffected && serial) {
-        const result = await db.query(
-          `
-          UPDATE client_devices
-          SET
-            manufacturer = COALESCE(@manufacturer, manufacturer),
-            model        = COALESCE(@model, model),
-            synced_at    = COALESCE(TRY_CONVERT(DATETIME2, @dateAdded), synced_at),
-            updated_at   = SYSUTCDATETIME()
-          WHERE (@clientDbId IS NULL OR @clientDbId = 0 OR client_db_id = @clientDbId)
-            AND serial_number = @serial
-          `,
-          {
-            clientDbId: { tipo: db.sql.Int, valor: Number(clientDbId) || 0 },
-            serial: { tipo: db.sql.NVarChar(200), valor: serial },
-            manufacturer: { tipo: db.sql.NVarChar(200), valor: manufacturer },
-            model: { tipo: db.sql.NVarChar(200), valor: model },
-            dateAdded: { tipo: db.sql.NVarChar(50), valor: dateAdded },
-          }
-        );
-        rowsAffected = result.rowsAffected || 0;
-      }
-
-      if (rowsAffected > 0) {
-        updated++;
-      } else {
-        unmatched++;
-      }
-    } catch (err) {
-      errors.push(`Row error: ${err.message}`);
-    }
+      })
+    );
   }
 
   return {

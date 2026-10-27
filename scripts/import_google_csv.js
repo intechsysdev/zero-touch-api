@@ -19,7 +19,9 @@ const { importGoogleCsv } = require('../src/zerotouch/csv-import');
 const { initDatabase, cerrarConexion } = require('../src/db');
 
 async function main() {
-  const defaultPath = '/Users/junior.development/Downloads/devices.csv';
+  const localPath = path.join(__dirname, '../src/zerotouch/devices.csv');
+  const downloadsPath = '/Users/junior.development/Downloads/devices.csv';
+  const defaultPath = fs.existsSync(localPath) ? localPath : downloadsPath;
   const csvPath = process.argv[2] || defaultPath;
   const clientDbId = process.argv[3] ? Number(process.argv[3]) : 0;
 

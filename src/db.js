@@ -219,6 +219,14 @@ const ESQUEMA = [
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'idx_clients_api_key_hash' AND object_id = OBJECT_ID(N'dbo.clients'))
       CREATE INDEX idx_clients_api_key_hash ON dbo.clients (api_key_hash) WHERE api_key_hash IS NOT NULL;
   `,
+  `
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'idx_client_devices_imei' AND object_id = OBJECT_ID(N'dbo.client_devices'))
+      CREATE INDEX idx_client_devices_imei ON dbo.client_devices (imei) WHERE imei IS NOT NULL;
+  `,
+  `
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'idx_client_devices_serial' AND object_id = OBJECT_ID(N'dbo.client_devices'))
+      CREATE INDEX idx_client_devices_serial ON dbo.client_devices (serial_number) WHERE serial_number IS NOT NULL;
+  `,
 ];
 
 async function initDatabase() {

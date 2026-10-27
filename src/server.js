@@ -157,8 +157,38 @@ async function start() {
     const { loadCatalogFromDb } = require('./zerotouch/device-catalog');
     await loadCatalogFromDb();
   } catch (_) {}
+
   app.listen(config.port, () => {
     console.log(`ZeroTouch API running on http://localhost:${config.port}`);
+
+    // Auto-enriquecimiento en segundo plano desde devices.csv si existe y hay equipos por enriquecer
+    (async () => {
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const csvPath = path.join(__dirname, 'zerotouch/devices.csv');
+        if (fs.existsSync(csvPath)) {
+          const { query } = require('./db');
+          const check = await query(`
+            SELECT TOP (1) 1 AS need_update
+            FROM client_devices
+            WHERE model = 'Dispositivo' OR model IS NULL OR manufacturer = 'N/A' OR manufacturer IS NULL
+          `);
+
+          if (check && check.rows && check.rows.length > 0) {
+            console.log('[Auto-import] Detectados equipos con modelo genérico. Iniciando enriquecimiento desde devices.csv...');
+            const csvText = fs.readFileSync(csvPath, 'utf8');
+            const { importGoogleCsv } = require('./zerotouch/csv-import');
+            const res = await importGoogleCsv(0, csvText);
+            console.log(`[Auto-import] Finalizado con éxito: ${res.updated} actualizados, ${res.totalCatalogModels} modelos en catálogo.`);
+          } else {
+            console.log('[Auto-import] Todos los equipos en base de datos ya se encuentran enriquecidos.');
+          }
+        }
+      } catch (err) {
+        console.error('[Auto-import] Error en auto-enriquecimiento de inicio:', err.message);
+      }
+    })();
   });
 }
 
