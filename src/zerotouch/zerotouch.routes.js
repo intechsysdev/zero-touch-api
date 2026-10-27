@@ -80,13 +80,25 @@ async function buscarEquipoDelCliente(customerId, deviceIdentifier) {
 function resumenEquipo(device, customerId) {
   const id = device.deviceIdentifier || {};
   const reclamo = reclamoDelCliente(device, customerId) || {};
+  let manufacturer = id.manufacturer || null;
+  let model = id.model || null;
+
+  if (id.imei && (!manufacturer || !model || model === 'Dispositivo' || manufacturer === 'N/A')) {
+    const { resolveModelFromImei } = require('./device-catalog');
+    const learned = resolveModelFromImei(id.imei);
+    if (learned) {
+      if (!manufacturer || manufacturer === 'N/A') manufacturer = learned.manufacturer;
+      if (!model || model === 'Dispositivo') model = learned.model;
+    }
+  }
+
   return {
     deviceId: device.deviceId,
     name: device.name,
     imei: id.imei || null,
     serialNumber: id.serialNumber || null,
-    manufacturer: id.manufacturer || null,
-    model: id.model || null,
+    manufacturer,
+    model,
     configuration: device.configuration || null,
     ownerCompanyId: reclamo.ownerCompanyId || null,
     resellerId: reclamo.resellerId || null,
@@ -378,6 +390,15 @@ router.get('/devices', async (req, res, next) => {
       let mfr = item.manufacturer || payload.deviceIdentifier.manufacturer;
       let mdl = item.model || payload.deviceIdentifier.model;
 
+      if (!mfr || !mdl || mdl === 'Dispositivo' || mfr === 'N/A') {
+        const { resolveModelFromImei } = require('./device-catalog');
+        const learned = resolveModelFromImei(payload.deviceIdentifier.imei || item.imei);
+        if (learned) {
+          if (!mfr || mfr === 'N/A') mfr = learned.manufacturer;
+          if (!mdl || mdl === 'Dispositivo') mdl = learned.model;
+        }
+      }
+
       payload.deviceIdentifier.manufacturer = mfr || 'N/A';
       payload.deviceIdentifier.model = mdl || 'Dispositivo';
 
@@ -527,10 +548,19 @@ router.get('/devices/identifier-options', async (req, res, next) => {
           : item.raw_payload_json || {};
       const identifier = payload.deviceIdentifier || {};
 
-      const manufacturer = String(
+      let manufacturer = String(
         item.manufacturer || identifier.manufacturer || ''
       ).trim();
-      const model = String(item.model || identifier.model || '').trim();
+      let model = String(item.model || identifier.model || '').trim();
+
+      if (!manufacturer || !model || model === 'Dispositivo' || manufacturer === 'N/A') {
+        const { resolveModelFromImei } = require('./device-catalog');
+        const learned = resolveModelFromImei(identifier.imei || item.imei);
+        if (learned) {
+          if (!manufacturer || manufacturer === 'N/A') manufacturer = learned.manufacturer;
+          if (!model || model === 'Dispositivo') model = learned.model;
+        }
+      }
 
       if (!manufacturer || manufacturer === 'N/A') {
         continue;

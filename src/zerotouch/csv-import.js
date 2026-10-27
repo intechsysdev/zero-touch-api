@@ -13,6 +13,7 @@
  */
 
 const { query, sql } = require('../db');
+const { learnFromCsvRows, normalizeManufacturer } = require('./device-catalog');
 
 /**
  * Parsea un CSV simple (RFC-4180): maneja comillas dobles y saltos dentro de campos.
@@ -85,33 +86,6 @@ function parseCsv(text) {
 }
 
 /**
- * Normaliza el texto de fabricante y modelo tal como lo entrega Google en el CSV.
- * Google a veces exporta el fabricante en minúsculas o con notación interna.
- */
-function normalizeManufacturer(raw) {
-  if (!raw) return null;
-  const map = {
-    lenovo: 'Lenovo',
-    samsung: 'Samsung',
-    motorola: 'Motorola',
-    xiaomi: 'Xiaomi',
-    redmi: 'Xiaomi',
-    huawei: 'Huawei',
-    honeywell: 'Honeywell',
-    chainway: 'Chainway',
-    lg: 'LG',
-    lge: 'LG',
-    nokia: 'HMD Global',
-    'hmd global': 'HMD Global',
-    ulefone: 'Ulefone',
-    blackview: 'Blackview',
-    zebra: 'Zebra',
-  };
-  const lower = raw.toLowerCase().trim();
-  return map[lower] || raw.trim();
-}
-
-/**
  * Actualiza la base de datos con los datos del CSV de Google.
  * Solo actualiza filas que ya existen en client_devices (por IMEI o serial).
  * No inserta filas nuevas: el sync normal se encarga de eso.
@@ -122,6 +96,14 @@ function normalizeManufacturer(raw) {
  */
 async function importGoogleCsv(clientDbId, csvText) {
   const { rows } = parseCsv(csvText);
+
+  // Auto-aprender todos los modelos de hardware presentes en el CSV
+  let catalogResult = { learnedCount: 0, totalInCatalog: 0 };
+  try {
+    catalogResult = await learnFromCsvRows(rows);
+  } catch (catalogErr) {
+    console.warn('Error auto-aprendiendo catálogo desde CSV:', catalogErr.message);
+  }
 
   let updated = 0;
   let skipped = 0;
@@ -216,7 +198,15 @@ async function importGoogleCsv(clientDbId, csvText) {
     }
   }
 
-  return { updated, skipped, unmatched, errors, totalRows: rows.length };
+  return {
+    updated,
+    skipped,
+    unmatched,
+    errors,
+    totalRows: rows.length,
+    modelsLearned: catalogResult.learnedCount,
+    totalCatalogModels: catalogResult.totalInCatalog,
+  };
 }
 
 module.exports = { importGoogleCsv, parseCsv };

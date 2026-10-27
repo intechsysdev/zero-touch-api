@@ -55,3 +55,4 @@ main().catch((err) => {
   console.error('Error durante la importación:', err.message);
   process.exit(1);
 });
+

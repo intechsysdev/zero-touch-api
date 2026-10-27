@@ -153,6 +153,10 @@ app.use((error, req, res, next) => {
 
 async function start() {
   await initDatabase();
+  try {
+    const { loadCatalogFromDb } = require('./zerotouch/device-catalog');
+    await loadCatalogFromDb();
+  } catch (_) {}
   app.listen(config.port, () => {
     console.log(`ZeroTouch API running on http://localhost:${config.port}`);
   });

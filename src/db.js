@@ -181,6 +181,16 @@ const ESQUEMA = [
       CONSTRAINT uq_client_devices_external_key UNIQUE (client_db_id, external_key)
     );
   `,
+  `
+    IF OBJECT_ID(N'dbo.device_model_catalog', N'U') IS NULL
+    CREATE TABLE dbo.device_model_catalog (
+      tac NVARCHAR(8) NOT NULL PRIMARY KEY,
+      manufacturer NVARCHAR(200) NOT NULL,
+      model NVARCHAR(200) NOT NULL,
+      source NVARCHAR(50) NOT NULL CONSTRAINT df_device_catalog_source DEFAULT 'google_csv',
+      updated_at DATETIME2 NOT NULL CONSTRAINT df_device_catalog_updated_at DEFAULT SYSUTCDATETIME()
+    );
+  `,
   // Columnas agregadas después (soporte multi-tenant de One y plataformas del Client ID)
   ...[
     ['one_tenant_id', 'UNIQUEIDENTIFIER NULL'],
@@ -359,8 +369,29 @@ async function replaceClientDevices(clientDbId, devices) {
       const deviceId = raw.deviceId || raw.name || null;
       const serialNumber = identifier.serialNumber || raw.serialNumber || null;
       const imei = identifier.imei || raw.imei || null;
-      const model = identifier.model || raw.model || null;
-      const manufacturer = identifier.manufacturer || raw.manufacturer || null;
+      let model = identifier.model || raw.model || null;
+      let manufacturer = identifier.manufacturer || raw.manufacturer || null;
+
+      // Si Google no devuelve modelo/fabricante pero tenemos IMEI, resolver desde el catálogo aprendido
+      if (imei && (!model || !manufacturer || model === 'Dispositivo' || manufacturer === 'N/A')) {
+        try {
+          const { resolveModelFromImei } = require('./zerotouch/device-catalog');
+          const learned = resolveModelFromImei(imei);
+          if (learned) {
+            if (!manufacturer || manufacturer === 'N/A') manufacturer = learned.manufacturer;
+            if (!model || model === 'Dispositivo') model = learned.model;
+          }
+        } catch (_) {}
+      }
+
+      if (raw.deviceIdentifier) {
+        if (manufacturer && !raw.deviceIdentifier.manufacturer) {
+          raw.deviceIdentifier.manufacturer = manufacturer;
+        }
+        if (model && !raw.deviceIdentifier.model) {
+          raw.deviceIdentifier.model = model;
+        }
+      }
 
       if (Array.isArray(raw.claims) && raw.claims.length > 0 && !raw.claims[0].createTime) {
         raw.claims[0].createTime = new Date().toISOString();
