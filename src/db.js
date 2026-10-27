@@ -367,6 +367,7 @@ async function replaceClientDevices(clientDbId, devices) {
   const transaccion = new sql.Transaction(pool);
   await transaccion.begin();
   try {
+    const syncMarker = new Date().toISOString();
     const validKeys = [];
 
     for (const raw of devices) {
@@ -416,7 +417,7 @@ async function replaceClientDevices(clientDbId, devices) {
               model = COALESCE(@model, model),
               manufacturer = COALESCE(@manufacturer, manufacturer),
               raw_payload_json = @rawPayload,
-              updated_at = SYSUTCDATETIME()
+              updated_at = TRY_CONVERT(DATETIME2, @syncMarker)
           WHERE client_db_id = @clientDbId AND external_key = @externalKey;
 
           IF @@ROWCOUNT = 0
@@ -434,7 +435,7 @@ async function replaceClientDevices(clientDbId, devices) {
             )
             VALUES (
               @clientDbId, @externalKey, @deviceId, @serialNumber, @imei, @model, @manufacturer,
-              @rawPayload, SYSUTCDATETIME(), SYSUTCDATETIME()
+              @rawPayload, SYSUTCDATETIME(), TRY_CONVERT(DATETIME2, @syncMarker)
             );
         `,
         {
@@ -446,6 +447,7 @@ async function replaceClientDevices(clientDbId, devices) {
           model: { tipo: sql.NVarChar(200), valor: model },
           manufacturer: { tipo: sql.NVarChar(200), valor: manufacturer },
           rawPayload: { tipo: sql.NVarChar(sql.MAX), valor: JSON.stringify(raw) },
+          syncMarker: { tipo: sql.NVarChar(50), valor: syncMarker },
         },
         transaccion
       );
@@ -460,34 +462,15 @@ async function replaceClientDevices(clientDbId, devices) {
       );
     } else {
       await query(
-        'CREATE TABLE #SyncedKeys (k NVARCHAR(450) COLLATE Latin1_General_BIN NOT NULL PRIMARY KEY);',
-        {},
-        transaccion
-      );
-
-      // Insertar en lotes de 100
-      for (let i = 0; i < validKeys.length; i += 100) {
-        const batch = validKeys.slice(i, i + 100);
-        const values = batch.map((_, idx) => `(@k${idx})`).join(', ');
-        const params = {};
-        batch.forEach((k, idx) => {
-          params[`k${idx}`] = { tipo: sql.NVarChar(450), valor: k };
-        });
-        await query(
-          `INSERT INTO #SyncedKeys (k) VALUES ${values};`,
-          params,
-          transaccion
-        );
-      }
-
-      await query(
         `
           DELETE FROM client_devices
           WHERE client_db_id = @clientDbId
-            AND external_key NOT IN (SELECT k FROM #SyncedKeys);
-          DROP TABLE #SyncedKeys;
+            AND (updated_at < TRY_CONVERT(DATETIME2, @syncMarker) OR updated_at IS NULL);
         `,
-        { clientDbId: idBd(clientDbId) },
+        {
+          clientDbId: idBd(clientDbId),
+          syncMarker: { tipo: sql.NVarChar(50), valor: syncMarker },
+        },
         transaccion
       );
     }
