@@ -113,6 +113,11 @@ async function importGoogleCsv(clientDbId, csvText) {
     console.warn('Error auto-aprendiendo catálogo desde CSV:', catalogErr.message);
   }
 
+  const db = getDb();
+  if (!db) {
+    throw new Error('Base de datos no disponible');
+  }
+
   let updated = 0;
   let skipped = 0;
   let unmatched = 0;
@@ -149,11 +154,6 @@ async function importGoogleCsv(clientDbId, csvText) {
 
       // Intentar actualizar por IMEI primero, luego por serial
       let rowsAffected = 0;
-
-      const db = getDb();
-      if (!db) {
-        throw new Error('Base de datos no disponible');
-      }
 
       if (imei) {
         const result = await db.query(
