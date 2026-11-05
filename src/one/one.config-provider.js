@@ -47,8 +47,16 @@ async function getCompanyDynamicConfig(clientDbId) {
       tenant: configData?.tenant || null,
       zeroTouchCustomerId: zeroTouchCustomerId ? String(zeroTouchCustomerId).trim() : null,
       zeroTouchCustomerName: zeroTouchCustomerName ? String(zeroTouchCustomerName).trim() : null,
-      samsungCustomerId: settings.SAMSUNG_KNOX_CUSTOMER_ID || null,
-      samsungProfileId: settings.SAMSUNG_KNOX_PROFILE_ID || null,
+      samsungCustomerId:
+        settings.SAMSUNG_KNOX_CUSTOMER_ID ||
+        settings.SAMSUNG_CUSTOMER_ID ||
+        settings.KNOX_CUSTOMER_ID ||
+        null,
+      samsungProfileId:
+        settings.SAMSUNG_KNOX_PROFILE_ID ||
+        settings.SAMSUNG_PROFILE_ID ||
+        settings.KNOX_PROFILE_ID ||
+        null,
       rawSettings: settings,
       configVersion: configData?.configVersion || '1.0',
     };

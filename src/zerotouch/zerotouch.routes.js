@@ -213,9 +213,15 @@ async function resolveCustomerIdFromAuth(req) {
       error.statusCode = 502;
       throw error;
     }
-    const mensaje = client.client_id.startsWith('one:')
+    let mensaje = client.client_id.startsWith('one:')
       ? `La empresa "${client.company_name}" no tiene asignado un Client ID en Intechsys One ni se encontró registrada en Google Zero-touch con ese nombre.`
-      : `El Client ID ${client.client_id} de "${client.company_name}" no existe en Zero-touch. Revise la variable de la empresa en One.`;
+      : `El Client ID ${client.client_id} de "${client.company_name}" no existe en Google Zero-touch.`;
+
+    if (client.samsung_customer_id) {
+      mensaje += ` Esta empresa tiene configurado Samsung Knox (Customer ID: ${client.samsung_customer_id}). Si también utiliza Android Enterprise, configure ZERO_TOUCH_CUSTOMER_ID en One.`;
+    } else {
+      mensaje += ` Revise la variable ZERO_TOUCH_CUSTOMER_ID de la empresa en One.`;
+    }
     const error = new Error(mensaje);
     error.statusCode = 400;
     throw error;

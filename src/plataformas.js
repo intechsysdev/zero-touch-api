@@ -96,10 +96,8 @@ async function detectarPlataformas(clientId, companyName = '') {
 async function asegurarPlataformas(client, { forzar = false } = {}) {
   if (!client?.id || !client.client_id) return client;
 
-  // Si ya tiene datos y el caché es reciente no se vuelve a consultar.
-  // Si zero_touch_customer_name está vacío se fuerza siempre la detección:
-  // el caché de 1 hora solo protege datos que ya existen.
-  const sinDatos = !client.zero_touch_customer_name;
+  // Si no tiene plataformas verificadas o falta Knox estando habilitado, se fuerza la detección.
+  const sinDatos = !client.zero_touch_customer_name || (!client.samsung_customer_id && isSamsungConfigured());
   const verificadas = client.plataformas_verificadas_at
     ? new Date(client.plataformas_verificadas_at).getTime()
     : 0;
@@ -107,6 +105,25 @@ async function asegurarPlataformas(client, { forzar = false } = {}) {
 
   const encontrado = await detectarPlataformas(client.client_id, client.company_name);
   const nuevoClientId = encontrado.detectedCompanyId;
+
+  let samsungCustomerId = encontrado.samsungCustomerId;
+  // Si Knox no devolvió customerId directo, buscar en variables dinámicas de One para la empresa
+  if (!samsungCustomerId) {
+    try {
+      const { getCompanyDynamicConfig } = require('./one');
+      const dynamic = await getCompanyDynamicConfig(client.id);
+      if (dynamic?.samsungCustomerId) {
+        samsungCustomerId = String(dynamic.samsungCustomerId).trim();
+      }
+    } catch (_) {}
+  }
+
+  // Si el client_id en One es numérico (ej: 992604390727) y la empresa no tiene Google o es Knox
+  if (!samsungCustomerId && client.client_id && !client.client_id.startsWith('one:') && isSamsungConfigured()) {
+    if (!encontrado.zeroTouchCustomerName || /^\d{10,15}$/.test(client.client_id)) {
+      samsungCustomerId = client.client_id;
+    }
+  }
 
   // Si Google no respondió no se borra lo que ya se sabía: mejor un dato de hace una hora que
   // dejar a la empresa sin plataforma por un corte.
@@ -122,7 +139,7 @@ async function asegurarPlataformas(client, { forzar = false } = {}) {
             THEN @nuevoClientId
             ELSE client_id
           END,
-          samsung_customer_id = @samsungCustomerId,
+          samsung_customer_id = COALESCE(@samsungCustomerId, samsung_customer_id),
           plataformas_verificadas_at = SYSUTCDATETIME()
       OUTPUT INSERTED.*
       WHERE id = @id
@@ -130,7 +147,7 @@ async function asegurarPlataformas(client, { forzar = false } = {}) {
     {
       customerName: encontrado.zeroTouchCustomerName,
       nuevoClientId: nuevoClientId || null,
-      samsungCustomerId: encontrado.samsungCustomerId,
+      samsungCustomerId: samsungCustomerId || null,
       id: String(client.id),
     }
   );
@@ -145,12 +162,27 @@ async function asegurarPlataformas(client, { forzar = false } = {}) {
 /** Lo que la consola necesita saber de las plataformas de una empresa. */
 function resumenPlataformas(client) {
   const zeroTouchCustomerName = client?.zero_touch_customer_name || null;
+  const zeroTouchAvailable = Boolean(zeroTouchCustomerName);
+  const samsungCustomerId = client?.samsung_customer_id || null;
+  const samsungAvailable = Boolean(samsungCustomerId);
+
+  // 'both' | 'samsung_only' | 'zerotouch_only' | 'none'
+  let platformType = 'none';
+  if (zeroTouchAvailable && samsungAvailable) {
+    platformType = 'both';
+  } else if (samsungAvailable) {
+    platformType = 'samsung_only';
+  } else if (zeroTouchAvailable) {
+    platformType = 'zerotouch_only';
+  }
+
   return {
-    zeroTouchAvailable: Boolean(zeroTouchCustomerName),
+    zeroTouchAvailable,
     zeroTouchCustomerName,
     zeroTouchCustomerId: zeroTouchCustomerName ? String(zeroTouchCustomerName).split('/').pop() : null,
-    samsungAvailable: Boolean(client?.samsung_customer_id),
-    samsungCustomerId: client?.samsung_customer_id || null,
+    samsungAvailable,
+    samsungCustomerId,
+    platformType,
   };
 }
 

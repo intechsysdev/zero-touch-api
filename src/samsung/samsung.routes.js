@@ -10,11 +10,33 @@ const { devicesLimiter } = require('../middleware');
 
 const router = express.Router();
 
-function resolveSamsungCustomerIdFromAuth(req, requestedCustomerId) {
-  const authCustomerId = String(req.auth.samsungCustomerId || '').trim();
+async function resolveSamsungCustomerIdFromAuth(req, requestedCustomerId) {
+  let authCustomerId = String(req.auth?.samsungCustomerId || req.tenant?.samsungCustomerId || '').trim();
+
+  // Si no venía en el token o tenant, consultar variables dinámicas de One para la empresa
+  if (!authCustomerId && req.tenant?.id) {
+    try {
+      const { getCompanyDynamicConfig } = require('../one');
+      const dynamic = await getCompanyDynamicConfig(req.tenant.id);
+      if (dynamic?.samsungCustomerId) {
+        authCustomerId = String(dynamic.samsungCustomerId).trim();
+      }
+    } catch (_) {}
+  }
+
+  // Fallback: si el Client ID asignado en One no es temporal one:... se usa como Customer ID
+  if (!authCustomerId && req.tenant?.clientId && !req.tenant.clientId.startsWith('one:')) {
+    authCustomerId = String(req.tenant.clientId).trim();
+  }
 
   if (!authCustomerId) {
-    const error = new Error('Este usuario no tiene Samsung Knox habilitado.');
+    let msg = `La empresa "${req.tenant?.companyName || 'actual'}" no tiene configurada la plataforma Samsung Knox.`;
+    if (req.tenant?.zeroTouchAvailable) {
+      msg += ` Esta empresa tiene habilitado Google Zero-touch (${req.tenant.zeroTouchCustomerId}). Para activar Samsung Knox, configure la variable SAMSUNG_KNOX_CUSTOMER_ID en Intechsys One.`;
+    } else {
+      msg += ` Configure la variable SAMSUNG_KNOX_CUSTOMER_ID en Intechsys One.`;
+    }
+    const error = new Error(msg);
     error.statusCode = 403;
     throw error;
   }
@@ -34,7 +56,7 @@ router.get('/devices', async (req, res, next) => {
       customerId: z.string().optional(),
     });
     const query = querySchema.parse(req.query);
-    const customerId = resolveSamsungCustomerIdFromAuth(req, query.customerId);
+    const customerId = await resolveSamsungCustomerIdFromAuth(req, query.customerId);
 
     const data = await listSamsungDevices({ customerId });
 
@@ -71,7 +93,7 @@ router.post('/devices/claim/bulk', devicesLimiter, async (req, res, next) => {
     });
 
     const body = bodySchema.parse(req.body);
-    const customerId = resolveSamsungCustomerIdFromAuth(req, body.customerId);
+    const customerId = await resolveSamsungCustomerIdFromAuth(req, body.customerId);
 
     const mappedDevices = body.devices
       .map((item) => String(item.meidImei || item.imei || '').trim())
@@ -132,7 +154,7 @@ router.post('/devices/unclaim', devicesLimiter, async (req, res, next) => {
     });
     const body = bodySchema.parse(req.body);
 
-    const customerId = resolveSamsungCustomerIdFromAuth(req);
+    const customerId = await resolveSamsungCustomerIdFromAuth(req);
 
     const fromArray = (body.deviceIds || []).map((item) => item.trim()).filter(Boolean);
     const fromIdentifier = [
