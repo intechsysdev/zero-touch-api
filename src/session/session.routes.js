@@ -45,16 +45,24 @@ router.get('/', async (req, res, next) => {
         esPlatformAdmin: req.user.isPlatformAdmin,
         roles: req.user.roles || [],
       },
-      empresas: empresas.map((e) => ({
-        id: e.id || null,
-        clientId: e.client_id,
-        nombre: e.company_name,
-        slug: e.one_slug,
-        oneTenantId: e.one_tenant_id,
-        rol: e.role || 'Member',
-        zeroTouchCustomerName: e.zero_touch_customer_name || null,
-        estaActiva: e.is_active ?? true,
-      })),
+      empresas: empresas.map((e) => {
+        const p = resumenPlataformas(e);
+        return {
+          id: e.id || null,
+          clientId: e.client_id,
+          nombre: e.company_name,
+          slug: e.one_slug,
+          oneTenantId: e.one_tenant_id,
+          rol: e.role || 'Member',
+          zeroTouchAvailable: p.zeroTouchAvailable,
+          zeroTouchCustomerName: e.zero_touch_customer_name || null,
+          zeroTouchCustomerId: p.zeroTouchCustomerId,
+          samsungAvailable: p.samsungAvailable,
+          samsungCustomerId: e.samsung_customer_id || null,
+          platformType: p.platformType,
+          estaActiva: e.is_active ?? true,
+        };
+      }),
       tenantActivo,
     });
   } catch (error) {

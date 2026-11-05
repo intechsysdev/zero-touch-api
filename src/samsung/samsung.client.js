@@ -227,7 +227,7 @@ async function getLegacySignedApiToken() {
     clientIdentifier
   );
 
-  const response = await fetch(`${config.samsungKnoxBaseUrl}/users/accesstoken`, {
+  const response = await fetch(`${config.samsungKnoxBaseUrl}/ams/v1/users/accesstoken`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -332,7 +332,11 @@ async function callKnox(path, { method = 'GET', query, body, tenantId } = {}) {
   }
 
   if (!response.ok) {
-    const error = new Error(payload.message || `Samsung Knox error: HTTP ${response.status}`);
+    let msg = payload.message || (typeof payload === 'string' ? payload : '') || rawText || `Samsung Knox error: HTTP ${response.status}`;
+    if (rawText && rawText.includes('is not actively managed by MSP')) {
+      msg = `La empresa (Customer ID: ${managedTenantId || 'desconocido'}) no tiene a INTECHSYS (Reseller ID: 2668304233) vinculado y autorizado en su portal de Samsung Knox.`;
+    }
+    const error = new Error(msg);
     error.statusCode = response.status;
     error.details = payload;
     throw error;

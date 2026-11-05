@@ -567,6 +567,17 @@ async function syncOneTenants(tenantsList = []) {
     const companySlug = slug || tenantId;
     const identifier = tenant.identifier ? String(tenant.identifier).trim() : null;
 
+    // Extraer SAMSUNG_KNOX_CUSTOMER_ID de las variables o propiedades del tenant enviadas por One
+    const tenantVars = tenant.variables || tenant.settings || tenant.appSettings || tenant.config || {};
+    const samsungIdFromOne =
+      tenant.samsungCustomerId ||
+      tenant.samsung_customer_id ||
+      tenantVars.SAMSUNG_KNOX_CUSTOMER_ID ||
+      tenantVars.SAMSUNG_CUSTOMER_ID ||
+      tenantVars.KNOX_CUSTOMER_ID ||
+      null;
+    const samsungIdValue = samsungIdFromOne ? String(samsungIdFromOne).trim() : null;
+
     const byTenant = await getClientByOneTenantId(tenantId);
     const byIdentifier = identifier ? await getClientByClientId(identifier) : null;
 
@@ -597,7 +608,7 @@ async function syncOneTenants(tenantsList = []) {
               client_id = COALESCE(@identifier, client_id),
               plataformas_verificadas_at = CASE WHEN @cambioClientId = 1 THEN NULL ELSE plataformas_verificadas_at END,
               zero_touch_customer_name = CASE WHEN @cambioClientId = 1 THEN NULL ELSE zero_touch_customer_name END,
-              samsung_customer_id = CASE WHEN @cambioClientId = 1 THEN NULL ELSE samsung_customer_id END
+              samsung_customer_id = COALESCE(@samsungId, samsung_customer_id)
           OUTPUT ${COLUMNAS_CLIENTE_INSERTADAS}
           WHERE id = @id
         `,
@@ -606,6 +617,7 @@ async function syncOneTenants(tenantsList = []) {
           companyName: { tipo: sql.NVarChar(400), valor: companyName },
           slug: { tipo: sql.NVarChar(200), valor: companySlug },
           identifier: { tipo: sql.NVarChar(200), valor: identifier },
+          samsungId: { tipo: sql.NVarChar(200), valor: samsungIdValue },
           cambioClientId: { tipo: sql.Bit, valor: Boolean(clientIdChanged) },
           id: idBd(existing.id),
         }
@@ -616,15 +628,16 @@ async function syncOneTenants(tenantsList = []) {
 
     const created = await query(
       `
-        INSERT INTO clients (client_id, company_name, one_tenant_id, one_slug, is_active)
+        INSERT INTO clients (client_id, company_name, one_tenant_id, one_slug, is_active, samsung_customer_id)
         OUTPUT ${COLUMNAS_CLIENTE_INSERTADAS}
-        VALUES (@clientId, @companyName, @tenantId, @slug, 1)
+        VALUES (@clientId, @companyName, @tenantId, @slug, 1, @samsungId)
       `,
       {
         clientId: { tipo: sql.NVarChar(200), valor: identifier || `one:${tenantId}` },
         companyName: { tipo: sql.NVarChar(400), valor: companyName },
         tenantId: { tipo: sql.UniqueIdentifier, valor: tenantId },
         slug: { tipo: sql.NVarChar(200), valor: companySlug },
+        samsungId: { tipo: sql.NVarChar(200), valor: samsungIdValue },
       }
     );
 
