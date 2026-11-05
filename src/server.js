@@ -92,6 +92,20 @@ app.get('/ready', async (req, res) => {
     googleError = error.message;
   }
 
+  let samsungStatus = 'ok';
+  let samsungConfigured = false;
+  try {
+    const { isSamsungConfigured } = require('./samsung/samsung.client');
+    samsungConfigured = isSamsungConfigured();
+    if (!config.samsungKnoxEnabled) {
+      samsungStatus = 'disabled';
+    } else if (!samsungConfigured) {
+      samsungStatus = 'unconfigured';
+    }
+  } catch (error) {
+    samsungStatus = 'error';
+  }
+
   const isOk = dbStatus === 'up' && googleStatus === 'ok';
   res.status(isOk ? 200 : 503).json({
     ok: isOk,
@@ -101,6 +115,12 @@ app.get('/ready', async (req, res) => {
       configured: Boolean(config.googleServiceAccountJson?.trim() || config.googleApplicationCredentials?.trim()),
       customersCount,
       error: googleError,
+    },
+    samsung: {
+      status: samsungStatus,
+      configured: samsungConfigured,
+      resellerId: config.samsungKnoxResellerId || null,
+      authMode: config.samsungKnoxAuthMode || 'legacy',
     },
   });
 });

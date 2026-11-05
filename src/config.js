@@ -57,6 +57,25 @@ function findGoogleCredentialsFile() {
   return '';
 }
 
+function findKnoxKeysFile() {
+  if (process.env.SAMSUNG_KNOX_KEYS_PATH) {
+    return process.env.SAMSUNG_KNOX_KEYS_PATH;
+  }
+  const fs = require('fs');
+  const path = require('path');
+  const candidatos = [
+    path.join(__dirname, 'samsung/knox-keys.json'),
+    path.join(__dirname, '../secrets/samsung-knox-keys.json'),
+    path.join(process.cwd(), 'secrets/samsung-knox-keys.json'),
+  ];
+  for (const c of candidatos) {
+    try {
+      if (fs.existsSync(c)) return c;
+    } catch {}
+  }
+  return '';
+}
+
 const config = {
   nodeEnv,
   port: Number(process.env.PORT || 8080),
@@ -96,21 +115,24 @@ const config = {
     'https://app-intechsysone-api-prd-bxehhkf8dgcwbve9.centralus-01.azurewebsites.net',
   oneAppSlug: process.env.ONE_APP_SLUG || 'zero-touch',
   oneTimeoutMs: Number(process.env.ONE_TIMEOUT_MS || 15000),
-  samsungKnoxEnabled: parseBoolean(process.env.SAMSUNG_KNOX_ENABLED, false),
+  samsungKnoxEnabled: parseBoolean(process.env.SAMSUNG_KNOX_ENABLED, true),
   samsungKnoxBaseUrl:
     process.env.SAMSUNG_KNOX_BASE_URL || 'https://us-kcs-api.samsungknox.com',
   samsungKnoxOAuthTokenUrl:
     process.env.SAMSUNG_KNOX_OAUTH_TOKEN_URL ||
     'https://api.samsungknox.com/ams/v1/oauth2/token',
-  samsungKnoxAuthMode: process.env.SAMSUNG_KNOX_AUTH_MODE || 'auto',
+  samsungKnoxAuthMode: process.env.SAMSUNG_KNOX_AUTH_MODE || 'legacy',
   samsungKnoxOAuthScope: process.env.SAMSUNG_KNOX_OAUTH_SCOPE || '',
   samsungKnoxApiToken: process.env.SAMSUNG_KNOX_API_TOKEN || '',
   samsungKnoxClientId: process.env.SAMSUNG_KNOX_CLIENT_ID || '',
   samsungKnoxClientSecret: process.env.SAMSUNG_KNOX_CLIENT_SECRET || '',
   samsungKnoxAccessToken: process.env.SAMSUNG_KNOX_ACCESS_TOKEN || '',
-  samsungKnoxClientIdentifier: process.env.SAMSUNG_KNOX_CLIENT_IDENTIFIER || '',
+  samsungKnoxClientIdentifier:
+    process.env.SAMSUNG_KNOX_CLIENT_IDENTIFIER ||
+    'eyJhbGciOiJIUzUxMiJ9.eyJjbGllbnRJZGVudGlmaWVyIjoiZDY1NzJiMDgtNjBkYS00MDkxLTkwNTYtOGViMzllOWM2NGNjNmU4MGY3ZDQtNDg0MS00YjNhLWI4ZTgtNDk4OTFjMWYwYzc2IiwiYXR0cjEiOiIwIn0.BNv9anRR4C_DuENRn9qmoDxY8XpX2r1rmWip-BnI9vjetvcMN2T0bj-a-n1KnhJ8UF55hspM2uTDSLFg_8Ypsw',
   samsungKnoxKeysJson: process.env.SAMSUNG_KNOX_KEYS_JSON || '',
-  samsungKnoxKeysPath: process.env.SAMSUNG_KNOX_KEYS_PATH || '',
+  samsungKnoxKeysPath: findKnoxKeysFile(),
+  samsungKnoxResellerId: process.env.SAMSUNG_KNOX_RESELLER_ID || '2668304233',
   samsungKnoxResellerEmail: process.env.SAMSUNG_KNOX_RESELLER_EMAIL || '',
   samsungKnoxAllowedLoginEmails: parseCsv(
     process.env.SAMSUNG_KNOX_ALLOWED_LOGIN_EMAILS || ''
