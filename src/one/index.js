@@ -5,6 +5,7 @@ const {
   verifyIntegrationCredentials,
   listUserAppTenants,
   getTenantConfig,
+  getTenantAppSettingsWithUserToken,
 } = require('./one.client');
 const { syncUserTenants } = require('./one.tenants');
 const { getCompanyDynamicConfig } = require('./one.config-provider');
@@ -17,6 +18,7 @@ module.exports = {
   verifyIntegrationCredentials,
   listUserAppTenants,
   getTenantConfig,
+  getTenantAppSettingsWithUserToken,
   syncUserTenants,
   getCompanyDynamicConfig,
 };

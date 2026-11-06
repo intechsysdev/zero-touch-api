@@ -106,7 +106,7 @@ async function asegurarPlataformas(client, { forzar = false } = {}) {
   const encontrado = await detectarPlataformas(client.client_id, client.company_name);
   const nuevoClientId = encontrado.detectedCompanyId;
 
-  let samsungCustomerId = encontrado.samsungCustomerId;
+  let samsungCustomerId = encontrado.samsungCustomerId || client.samsung_customer_id || null;
   // Si Knox no devolvió customerId directo, buscar en variables dinámicas de One para la empresa
   if (!samsungCustomerId) {
     try {
@@ -118,11 +118,13 @@ async function asegurarPlataformas(client, { forzar = false } = {}) {
     } catch (_) {}
   }
 
-  // Si el client_id en One es numérico (ej: 992604390727) y la empresa no tiene Google o es Knox
-  if (!samsungCustomerId && client.client_id && !client.client_id.startsWith('one:') && isSamsungConfigured()) {
-    if (!encontrado.zeroTouchCustomerName || /^\d{10,15}$/.test(client.client_id)) {
-      samsungCustomerId = client.client_id;
-    }
+  // Si por error previo samsungCustomerId era igual al ID de Google Zero-touch, se descarta
+  if (
+    samsungCustomerId &&
+    (samsungCustomerId === client.client_id || samsungCustomerId === nuevoClientId) &&
+    (encontrado.zeroTouchCustomerName || client.zero_touch_customer_name)
+  ) {
+    samsungCustomerId = null;
   }
 
   // Si Google no respondió no se borra lo que ya se sabía: mejor un dato de hace una hora que
@@ -139,7 +141,7 @@ async function asegurarPlataformas(client, { forzar = false } = {}) {
             THEN @nuevoClientId
             ELSE client_id
           END,
-          samsung_customer_id = COALESCE(@samsungCustomerId, samsung_customer_id),
+          samsung_customer_id = @samsungCustomerId,
           plataformas_verificadas_at = SYSUTCDATETIME()
       OUTPUT INSERTED.*
       WHERE id = @id
@@ -163,7 +165,16 @@ async function asegurarPlataformas(client, { forzar = false } = {}) {
 function resumenPlataformas(client) {
   const zeroTouchCustomerName = client?.zero_touch_customer_name || null;
   const zeroTouchAvailable = Boolean(zeroTouchCustomerName);
-  const samsungCustomerId = client?.samsung_customer_id || null;
+  let samsungCustomerId = client?.samsung_customer_id || null;
+
+  // Si coincide con el client_id de Google y la empresa tiene Google Zero-touch, no es de Samsung
+  if (
+    samsungCustomerId &&
+    samsungCustomerId === client?.client_id &&
+    zeroTouchAvailable
+  ) {
+    samsungCustomerId = null;
+  }
   const samsungAvailable = Boolean(samsungCustomerId);
 
   // 'both' | 'samsung_only' | 'zerotouch_only' | 'none'

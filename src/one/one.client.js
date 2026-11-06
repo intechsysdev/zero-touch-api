@@ -195,10 +195,77 @@ async function getTenantConfig(apiKey, apiSecret, tenantCacheKey = '') {
   return configData;
 }
 
+/**
+ * Endpoint 5: Configuración de la App por Tenant vía Token de Usuario
+ * Consulta las apps del tenant en One, busca la suscripción de "zero-touch"
+ * y obtiene los settings (variables), descifrando secretos si corresponde (reveal).
+ * Caché en memoria por 2 minutos.
+ */
+async function getTenantAppSettingsWithUserToken(token, tenantId) {
+  if (!token || !tenantId) return {};
+
+  const cacheKey = `one:tenant-app-settings:${tenantId}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const apps = await callOne(`/api/v1/tenants/${tenantId}/apps`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-Tenant-Id': tenantId,
+      },
+    });
+
+    const zeroTouchApp = (Array.isArray(apps) ? apps : []).find(
+      (a) => a.appSlug === oneConfig.appSlug || a.appSlug === 'zero-touch'
+    );
+    if (!zeroTouchApp) {
+      cache.set(cacheKey, {}, 60 * 1000);
+      return {};
+    }
+
+    const settingsList = await callOne(`/api/v1/tenants/${tenantId}/apps/${zeroTouchApp.id}/settings`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-Tenant-Id': tenantId,
+      },
+    });
+
+    const result = {};
+    for (const s of (Array.isArray(settingsList) ? settingsList : [])) {
+      let val = s.value;
+      if (s.isSecret && s.hasValue && (!val || val.includes('•'))) {
+        try {
+          const revData = await callOne(
+            `/api/v1/tenants/${tenantId}/apps/${zeroTouchApp.id}/settings/${s.id}/reveal`,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'X-Tenant-Id': tenantId,
+              },
+            }
+          );
+          val = revData?.value || val;
+        } catch (_) {}
+      }
+      if (s.key && val && !val.includes('•')) {
+        result[s.key] = String(val).trim();
+      }
+    }
+
+    cache.set(cacheKey, result, 2 * 60 * 1000);
+    return result;
+  } catch (error) {
+    console.warn(`No se pudieron obtener settings de One para tenant ${tenantId}:`, error.message);
+    return {};
+  }
+}
+
 module.exports = {
   verifyUserToken,
   verifyIntegrationCredentials,
   listUserAppTenants,
   getTenantConfig,
+  getTenantAppSettingsWithUserToken,
 };
 

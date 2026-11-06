@@ -13,7 +13,27 @@ const router = express.Router();
 async function resolveSamsungCustomerIdFromAuth(req, requestedCustomerId) {
   let authCustomerId = String(req.auth?.samsungCustomerId || req.tenant?.samsungCustomerId || '').trim();
 
-  // Si no venía en el token o tenant, consultar variables dinámicas de One para la empresa
+  // Si authCustomerId coincide con el de Google Zero-touch de esta empresa, no es de Samsung Knox
+  if (
+    authCustomerId &&
+    (authCustomerId === req.tenant?.zeroTouchCustomerId || authCustomerId === req.tenant?.clientId) &&
+    req.tenant?.zeroTouchAvailable
+  ) {
+    authCustomerId = '';
+  }
+
+  // Si no venía en el token o tenant, consultar variables de One para la empresa
+  if (!authCustomerId && req.user?.token && req.tenant?.oneTenantId) {
+    try {
+      const { getTenantAppSettingsWithUserToken } = require('../one');
+      const settings = await getTenantAppSettingsWithUserToken(req.user.token, req.tenant.oneTenantId);
+      if (settings?.SAMSUNG_KNOX_CUSTOMER_ID) {
+        authCustomerId = String(settings.SAMSUNG_KNOX_CUSTOMER_ID).trim();
+      }
+    } catch (_) {}
+  }
+
+  // Fallback con credenciales de integración de One si existen
   if (!authCustomerId && req.tenant?.id) {
     try {
       const { getCompanyDynamicConfig } = require('../one');
@@ -22,11 +42,6 @@ async function resolveSamsungCustomerIdFromAuth(req, requestedCustomerId) {
         authCustomerId = String(dynamic.samsungCustomerId).trim();
       }
     } catch (_) {}
-  }
-
-  // Fallback: si el Client ID asignado en One no es temporal one:... se usa como Customer ID
-  if (!authCustomerId && req.tenant?.clientId && !req.tenant.clientId.startsWith('one:')) {
-    authCustomerId = String(req.tenant.clientId).trim();
   }
 
   if (!authCustomerId) {

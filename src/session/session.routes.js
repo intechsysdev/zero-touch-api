@@ -23,17 +23,18 @@ router.get('/', async (req, res, next) => {
       console.warn('No se pudieron sincronizar las empresas de One:', syncError.message);
     }
 
-    // La empresa activa se resolvió antes de sincronizar: si en One le cambiaron el Client ID,
-    // se responde con el nuevo y con sus plataformas.
+    // La empresa activa se resolvió antes de sincronizar: refrescar con los datos
+    // y plataformas recién sincronizados desde One (incluyendo SAMSUNG_KNOX_CUSTOMER_ID)
     let tenantActivo = req.tenant || null;
     const activa = tenantActivo && empresas.find((e) => e.one_tenant_id === tenantActivo.oneTenantId);
-    if (activa && activa.client_id !== tenantActivo.clientId) {
+    if (activa) {
       const client = await asegurarPlataformas(activa);
+      const plataformas = resumenPlataformas(client);
       tenantActivo = {
         ...tenantActivo,
         clientId: client.client_id,
         companyName: client.company_name,
-        ...resumenPlataformas(client),
+        ...plataformas,
       };
     }
 

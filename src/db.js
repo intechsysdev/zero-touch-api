@@ -569,13 +569,31 @@ async function syncOneTenants(tenantsList = []) {
 
     // Extraer SAMSUNG_KNOX_CUSTOMER_ID de las variables o propiedades del tenant enviadas por One
     const tenantVars = tenant.variables || tenant.settings || tenant.appSettings || tenant.config || {};
-    const samsungIdFromOne =
+    let samsungIdFromOne =
       tenant.samsungCustomerId ||
       tenant.samsung_customer_id ||
-      tenantVars.SAMSUNG_KNOX_CUSTOMER_ID ||
-      tenantVars.SAMSUNG_CUSTOMER_ID ||
-      tenantVars.KNOX_CUSTOMER_ID ||
       null;
+
+    if (!samsungIdFromOne) {
+      if (Array.isArray(tenantVars)) {
+        const item = tenantVars.find(
+          (v) =>
+            v?.key === 'SAMSUNG_KNOX_CUSTOMER_ID' ||
+            v?.name === 'SAMSUNG_KNOX_CUSTOMER_ID' ||
+            v?.key === 'SAMSUNG_CUSTOMER_ID' ||
+            v?.name === 'SAMSUNG_CUSTOMER_ID' ||
+            v?.key === 'KNOX_CUSTOMER_ID' ||
+            v?.name === 'KNOX_CUSTOMER_ID'
+        );
+        samsungIdFromOne = item?.value || null;
+      } else if (typeof tenantVars === 'object') {
+        samsungIdFromOne =
+          tenantVars.SAMSUNG_KNOX_CUSTOMER_ID ||
+          tenantVars.SAMSUNG_CUSTOMER_ID ||
+          tenantVars.KNOX_CUSTOMER_ID ||
+          null;
+      }
+    }
     const samsungIdValue = samsungIdFromOne ? String(samsungIdFromOne).trim() : null;
 
     const byTenant = await getClientByOneTenantId(tenantId);
@@ -608,7 +626,11 @@ async function syncOneTenants(tenantsList = []) {
               client_id = COALESCE(@identifier, client_id),
               plataformas_verificadas_at = CASE WHEN @cambioClientId = 1 THEN NULL ELSE plataformas_verificadas_at END,
               zero_touch_customer_name = CASE WHEN @cambioClientId = 1 THEN NULL ELSE zero_touch_customer_name END,
-              samsung_customer_id = COALESCE(@samsungId, samsung_customer_id)
+              samsung_customer_id = CASE
+                WHEN @samsungId IS NOT NULL THEN @samsungId
+                WHEN samsung_customer_id = @identifier THEN NULL
+                ELSE samsung_customer_id
+              END
           OUTPUT ${COLUMNAS_CLIENTE_INSERTADAS}
           WHERE id = @id
         `,
