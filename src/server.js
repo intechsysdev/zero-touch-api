@@ -153,8 +153,8 @@ app.use(
 // ══════════════════════════════════════════════
 // RUTAS DE NEGOCIO (Zero Touch y Samsung Knox)
 // ══════════════════════════════════════════════
-app.use('/zerotouch', requireAuth, resolveTenant, requireTenant, zeroTouchRouter);
-app.use('/samsung', requireAuth, resolveTenant, requireTenant, samsungRouter);
+app.use(['/zerotouch', '/api/v1/zerotouch'], requireAuth, resolveTenant, requireTenant, zeroTouchRouter);
+app.use(['/samsung', '/api/v1/samsung'], requireAuth, resolveTenant, requireTenant, samsungRouter);
 
 // ══════════════════════════════════════════════
 // MANEJO GLOBAL DE ERRORES

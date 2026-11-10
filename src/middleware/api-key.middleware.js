@@ -52,6 +52,8 @@ async function requireApiKeyOrIntegration(req, res, next) {
       };
 
       if (client) {
+        const { resumenPlataformas } = require('../plataformas');
+        const plataformas = resumenPlataformas(client);
         req.tenant = {
           id: client.id,
           clientDbId: client.id,
@@ -59,8 +61,9 @@ async function requireApiKeyOrIntegration(req, res, next) {
           companyName: client.company_name,
           oneTenantId: client.one_tenant_id,
           oneSlug: client.one_slug,
-          zeroTouchCustomerName: client.zero_touch_customer_name,
+          ...plataformas,
         };
+        req.auth.samsungCustomerId = plataformas.samsungCustomerId;
       }
 
       return next();
