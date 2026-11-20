@@ -432,7 +432,10 @@ async function uploadSamsungDevices({ customerId, profileId, devices }) {
     customerId,
     resellerId,
     transactionId,
-    devices: deviceIdentifiers,
+    devices: deviceIdentifiers.map((id) => ({
+      deviceIdentifier: id,
+      type: 'IMEI',
+    })),
   };
 
   const uploadResult = await callKnox('/kcs/v1/rp/devices/upload', {
