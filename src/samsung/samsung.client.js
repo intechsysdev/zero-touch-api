@@ -296,7 +296,9 @@ async function callKnox(path, { method = 'GET', query, body, tenantId } = {}) {
   }
 
   const authMode = resolveAuthMode();
-  const managedTenantId = String(tenantId || query?.customerId || '').trim();
+  const managedTenantId = String(
+    tenantId || query?.customerId || body?.customerId || ''
+  ).trim();
   let headers = {
     Accept: 'application/json',
     ...(body ? { 'Content-Type': 'application/json' } : {}),
@@ -307,6 +309,7 @@ async function callKnox(path, { method = 'GET', query, body, tenantId } = {}) {
     headers = {
       ...headers,
       'x-knox-apitoken': signedApiToken,
+      'X-SES-JWT': signedApiToken,
       ...(managedTenantId ? { 'x-wsm-managed-tenantid': managedTenantId } : {}),
     };
   } else {
@@ -314,6 +317,9 @@ async function callKnox(path, { method = 'GET', query, body, tenantId } = {}) {
     headers = {
       ...headers,
       Authorization: `Bearer ${accessToken}`,
+      'X-SES-JWT': accessToken,
+      'x-knox-apitoken': accessToken,
+      ...(managedTenantId ? { 'x-wsm-managed-tenantid': managedTenantId } : {}),
     };
   }
 
@@ -332,7 +338,13 @@ async function callKnox(path, { method = 'GET', query, body, tenantId } = {}) {
   }
 
   if (!response.ok) {
-    let msg = payload.message || (typeof payload === 'string' ? payload : '') || rawText || `Samsung Knox error: HTTP ${response.status}`;
+    let msg =
+      payload.errorMessages ||
+      payload.errorMessage ||
+      payload.message ||
+      (typeof payload === 'string' ? payload : '') ||
+      rawText ||
+      `Samsung Knox error: HTTP ${response.status}`;
     if (rawText && rawText.includes('is not actively managed by MSP')) {
       msg = `La empresa (Customer ID: ${managedTenantId || 'desconocido'}) no tiene a INTECHSYS (Reseller ID: 2668304233) vinculado y autorizado en su portal de Samsung Knox.`;
     }
@@ -399,6 +411,7 @@ async function listSamsungDevices({ customerId }) {
 async function uploadSamsungDevices({ customerId, profileId, devices }) {
   const payload = await callKnox('/kcs/v1/reseller/devices/uploads', {
     method: 'POST',
+    tenantId: customerId,
     body: {
       customerId,
       devices,
