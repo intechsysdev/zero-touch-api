@@ -48,6 +48,12 @@ router.get('/', async (req, res, next) => {
       },
       empresas: empresas.map((e) => {
         const p = resumenPlataformas(e);
+        const profileId =
+          e.samsungProfileId ||
+          e.settings?.SAMSUNG_KNOX_PROFILE_ID ||
+          e.settings?.SAMSUNG_PROFILE_ID ||
+          e.settings?.KNOX_PROFILE_ID ||
+          null;
         return {
           id: e.id || null,
           clientId: e.client_id,
@@ -60,11 +66,22 @@ router.get('/', async (req, res, next) => {
           zeroTouchCustomerId: p.zeroTouchCustomerId,
           samsungAvailable: p.samsungAvailable,
           samsungCustomerId: e.samsung_customer_id || null,
+          samsungProfileId: profileId,
           platformType: p.platformType,
           estaActiva: e.is_active ?? true,
         };
       }),
-      tenantActivo,
+      tenantActivo: tenantActivo
+        ? {
+            ...tenantActivo,
+            samsungProfileId:
+              activa?.samsungProfileId ||
+              activa?.settings?.SAMSUNG_KNOX_PROFILE_ID ||
+              activa?.settings?.SAMSUNG_PROFILE_ID ||
+              activa?.settings?.KNOX_PROFILE_ID ||
+              null,
+          }
+        : null,
     });
   } catch (error) {
     next(error);

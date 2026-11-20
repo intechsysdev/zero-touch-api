@@ -22,7 +22,14 @@ async function syncUserTenants(token) {
         const settings = await getTenantAppSettingsWithUserToken(token, t.tenantId);
         t.settings = settings;
         if (settings.SAMSUNG_KNOX_CUSTOMER_ID) {
-          t.samsungCustomerId = settings.SAMSUNG_KNOX_CUSTOMER_ID;
+          t.samsungCustomerId = String(settings.SAMSUNG_KNOX_CUSTOMER_ID).trim();
+        }
+        const profileId =
+          settings.SAMSUNG_KNOX_PROFILE_ID ||
+          settings.SAMSUNG_PROFILE_ID ||
+          settings.KNOX_PROFILE_ID;
+        if (profileId) {
+          t.samsungProfileId = String(profileId).trim();
         }
       } catch (err) {
         console.warn(`Error al consultar variables de One para tenant ${t.tenantId}:`, err.message);
@@ -32,6 +39,15 @@ async function syncUserTenants(token) {
 
   // 3. Sincronizar / auto-provisionar en la base de datos
   const syncedClients = await syncOneTenants(tenantsFromOne);
+
+  // Mapear settings y samsungProfileId en los syncedClients
+  for (const client of syncedClients) {
+    const match = tenantsFromOne.find((t) => t.tenantId === client.one_tenant_id);
+    if (match) {
+      client.settings = match.settings || {};
+      client.samsungProfileId = match.samsungProfileId || null;
+    }
+  }
 
   return syncedClients;
 }

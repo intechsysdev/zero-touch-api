@@ -424,34 +424,46 @@ async function uploadSamsungDevices({ customerId, profileId, devices }) {
 
   const resellerId = String(config.samsungKnoxResellerId || '2668304233').trim();
 
-  try {
-    return await callKnox('/kcs/v1/rp/devices/upload', {
-      method: 'PUT',
-      tenantId: customerId,
-      body: {
-        customerId,
-        resellerId,
-        transactionId,
-        type: 'IMEI',
-        devices: deviceIdentifiers,
-        profileAliases: profileId ? [profileId] : undefined,
-      },
-    });
-  } catch (kdpError) {
+  // 1. Cargar dispositivos en Knox Deployment Program (KDP) API v2
+  // PUT /kcs/v1/rp/devices/upload
+  // Schema oficial Samsung KDP:
+  // { customerId, resellerId, transactionId, devices: [ "imei1", "imei2" ] }
+  const kdpUploadPayload = {
+    customerId,
+    resellerId,
+    transactionId,
+    devices: deviceIdentifiers,
+  };
+
+  const uploadResult = await callKnox('/kcs/v1/rp/devices/upload', {
+    method: 'PUT',
+    tenantId: customerId,
+    body: kdpUploadPayload,
+  });
+
+  // 2. Si se especificó un profileId, asociar el perfil a los dispositivos vía KME
+  // PUT /kcs/v1/kme/devices/assignProfile
+  // { customerId, profileId, deviceDetails: [ { imei } ] }
+  if (profileId && String(profileId).trim()) {
     try {
-      return await callKnox('/kcs/v1/kme/devices/uploads', {
-        method: 'POST',
+      await callKnox('/kcs/v1/kme/devices/assignProfile', {
+        method: 'PUT',
         tenantId: customerId,
         body: {
           customerId,
-          profileId,
-          devices: deviceIdentifiers.map((imei) => ({ meidImei: imei })),
+          profileId: String(profileId).trim(),
+          deviceDetails: deviceIdentifiers.map((imei) => ({ imei })),
         },
       });
-    } catch (_) {
-      throw kdpError;
+    } catch (profileError) {
+      console.warn(
+        `Dispositivos subidos a Samsung Knox pero advertencia al asignar perfil ${profileId}:`,
+        profileError.message
+      );
     }
   }
+
+  return uploadResult;
 }
 
 async function deleteSamsungDevices({ customerId, deviceIds }) {

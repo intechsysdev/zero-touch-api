@@ -96,7 +96,7 @@ router.post('/devices/claim/bulk', devicesLimiter, async (req, res, next) => {
   try {
     const bodySchema = z.object({
       customerId: z.string().optional(),
-      profileId: z.union([z.string(), z.number()]),
+      profileId: z.union([z.string(), z.number()]).optional().nullable(),
       devices: z
         .array(
           z.object({
@@ -109,6 +109,24 @@ router.post('/devices/claim/bulk', devicesLimiter, async (req, res, next) => {
 
     const body = bodySchema.parse(req.body);
     const customerId = await resolveSamsungCustomerIdFromAuth(req, body.customerId);
+
+    let profileId = body.profileId ? String(body.profileId).trim() : '';
+
+    // Si profileId no vino en el body, resolverlo automáticamente de las variables de One para esta empresa
+    if (!profileId && req.tenant?.samsungProfileId) {
+      profileId = req.tenant.samsungProfileId;
+    }
+    if (!profileId && req.user?.token && req.tenant?.oneTenantId) {
+      try {
+        const { getTenantAppSettingsWithUserToken } = require('../one');
+        const settings = await getTenantAppSettingsWithUserToken(req.user.token, req.tenant.oneTenantId);
+        profileId =
+          settings?.SAMSUNG_KNOX_PROFILE_ID ||
+          settings?.SAMSUNG_PROFILE_ID ||
+          settings?.KNOX_PROFILE_ID ||
+          '';
+      } catch (_) {}
+    }
 
     const mappedDevices = body.devices
       .map((item) => String(item.meidImei || item.imei || '').trim())
@@ -123,7 +141,7 @@ router.post('/devices/claim/bulk', devicesLimiter, async (req, res, next) => {
 
     const response = await uploadSamsungDevices({
       customerId,
-      profileId: String(body.profileId).trim(),
+      profileId: profileId || undefined,
       devices: mappedDevices,
     });
 
