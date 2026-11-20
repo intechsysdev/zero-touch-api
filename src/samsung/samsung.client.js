@@ -309,7 +309,6 @@ async function callKnox(path, { method = 'GET', query, body, tenantId } = {}) {
     headers = {
       ...headers,
       'x-knox-apitoken': signedApiToken,
-      'X-SES-JWT': signedApiToken,
       ...(managedTenantId ? { 'x-wsm-managed-tenantid': managedTenantId } : {}),
     };
   } else {
@@ -317,7 +316,6 @@ async function callKnox(path, { method = 'GET', query, body, tenantId } = {}) {
     headers = {
       ...headers,
       Authorization: `Bearer ${accessToken}`,
-      'X-SES-JWT': accessToken,
       'x-knox-apitoken': accessToken,
       ...(managedTenantId ? { 'x-wsm-managed-tenantid': managedTenantId } : {}),
     };
@@ -338,6 +336,16 @@ async function callKnox(path, { method = 'GET', query, body, tenantId } = {}) {
   }
 
   if (!response.ok) {
+    if (
+      response.status === 401 ||
+      response.status === 403 ||
+      rawText.includes('JWT') ||
+      rawText.includes('TOKEN')
+    ) {
+      legacyTokenCache = { signedApiToken: '', expiresAtMs: 0 };
+      tokenCache = { accessToken: '', expiresAtMs: 0 };
+    }
+
     let msg =
       payload.errorMessages ||
       payload.errorMessage ||
@@ -409,17 +417,41 @@ async function listSamsungDevices({ customerId }) {
 }
 
 async function uploadSamsungDevices({ customerId, profileId, devices }) {
-  const payload = await callKnox('/kcs/v1/reseller/devices/uploads', {
-    method: 'POST',
-    tenantId: customerId,
-    body: {
-      customerId,
-      devices,
-      profileId,
-    },
-  });
+  const transactionId = `tx-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+  const deviceIdentifiers = devices
+    .map((d) => String(d.meidImei || d.imei || d.serialNumber || '').trim())
+    .filter(Boolean);
 
-  return payload;
+  const resellerId = String(config.samsungKnoxResellerId || '2668304233').trim();
+
+  try {
+    return await callKnox('/kcs/v1/rp/devices/upload', {
+      method: 'PUT',
+      tenantId: customerId,
+      body: {
+        customerId,
+        resellerId,
+        transactionId,
+        type: 'IMEI',
+        devices: deviceIdentifiers,
+        profileAliases: profileId ? [profileId] : undefined,
+      },
+    });
+  } catch (kdpError) {
+    try {
+      return await callKnox('/kcs/v1/kme/devices/uploads', {
+        method: 'POST',
+        tenantId: customerId,
+        body: {
+          customerId,
+          profileId,
+          devices: deviceIdentifiers.map((imei) => ({ meidImei: imei })),
+        },
+      });
+    } catch (_) {
+      throw kdpError;
+    }
+  }
 }
 
 async function deleteSamsungDevices({ customerId, deviceIds }) {
