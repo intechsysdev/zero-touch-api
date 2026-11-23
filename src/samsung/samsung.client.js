@@ -410,15 +410,40 @@ function normalizeKnoxDevices(payload) {
 }
 
 async function listSamsungDevices({ customerId }) {
-  const payload = await callKnox('/kcs/v1/kme/devices/list', {
-    method: 'GET',
-    tenantId: customerId,
-  });
+  let allRawDevices = [];
+  let currentPage = 0;
+  let totalCount = Infinity;
+  let firstPayload = null;
+
+  // Paginar para traer todos los dispositivos de la empresa (Knox limita a 100 por página)
+  while (allRawDevices.length < totalCount && currentPage < 25) {
+    const payload = await callKnox('/kcs/v1/kme/devices/list', {
+      method: 'GET',
+      tenantId: customerId,
+      query: {
+        pageNum: currentPage,
+        pageSize: 100,
+      },
+    });
+
+    if (!firstPayload) firstPayload = payload;
+
+    const list = payload.deviceList || payload.devices || payload.content || [];
+    if (!Array.isArray(list) || list.length === 0) {
+      break;
+    }
+
+    allRawDevices.push(...list);
+    totalCount = typeof payload.totalCount === 'number' ? payload.totalCount : allRawDevices.length;
+    currentPage += 1;
+
+    if (list.length < 100) break;
+  }
 
   return {
     customerId,
-    devices: normalizeKnoxDevices(payload),
-    raw: payload,
+    devices: normalizeKnoxDevices({ deviceList: allRawDevices }),
+    raw: firstPayload,
   };
 }
 
