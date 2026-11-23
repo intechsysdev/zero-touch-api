@@ -169,6 +169,7 @@ async function getKnoxAccessToken() {
   });
 
   const rawText = await response.text();
+  console.log(`[Knox] Response HTTP ${response.status}:`, rawText.substring(0, 500));
   let payload = {};
   try {
     payload = rawText ? JSON.parse(rawText) : {};
@@ -241,6 +242,7 @@ async function getLegacySignedApiToken() {
   });
 
   const rawText = await response.text();
+  console.log(`[Knox] Response HTTP ${response.status}:`, rawText.substring(0, 500));
   let payload = {};
   try {
     payload = rawText ? JSON.parse(rawText) : {};
@@ -321,6 +323,9 @@ async function callKnox(path, { method = 'GET', query, body, tenantId } = {}) {
     };
   }
 
+  console.log(`[Knox] ${method} ${url.toString()}`);
+  if (body) console.log('[Knox] Body:', JSON.stringify(body, null, 2));
+
   const response = await fetch(url.toString(), {
     method,
     headers,
@@ -328,6 +333,7 @@ async function callKnox(path, { method = 'GET', query, body, tenantId } = {}) {
   });
 
   const rawText = await response.text();
+  console.log(`[Knox] Response HTTP ${response.status}:`, rawText.substring(0, 500));
   let payload = {};
   try {
     payload = rawText ? JSON.parse(rawText) : {};
@@ -426,17 +432,19 @@ async function uploadSamsungDevices({ customerId, profileId, devices }) {
 
   // 1. Cargar dispositivos en Knox Deployment Program (KDP) API v2
   // PUT /kcs/v1/rp/devices/upload
-  // Schema oficial Samsung KDP:
-  // { customerId, resellerId, transactionId, devices: [ "imei1", "imei2" ] }
+  // Schema oficial Samsung KDP (campo correcto: meidImei, no deviceIdentifier):
+  // { customerId, resellerId, transactionId, devices: [ { meidImei: "354612..." } ] }
   const kdpUploadPayload = {
     customerId,
     resellerId,
     transactionId,
     devices: deviceIdentifiers.map((id) => ({
-      deviceIdentifier: id,
-      type: 'IMEI',
+      meidImei: id,
     })),
   };
+
+  console.log('[Samsung Knox] uploadSamsungDevices - payload enviado a Knox KDP:');
+  console.log(JSON.stringify(kdpUploadPayload, null, 2));
 
   const uploadResult = await callKnox('/kcs/v1/rp/devices/upload', {
     method: 'PUT',
