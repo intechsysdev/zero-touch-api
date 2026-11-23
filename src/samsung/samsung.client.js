@@ -432,13 +432,16 @@ async function uploadSamsungDevices({ customerId, profileId, devices }) {
 
   // 1. Cargar dispositivos en Knox Deployment Program (KDP) API v2
   // PUT /kcs/v1/rp/devices/upload
-  // Samsung KDP espera array de STRINGS planos (no objetos):
-  // { customerId, resellerId, transactionId, devices: [ "354612...", "354612..." ] }
+  // Schema oficial Samsung KDP v2.0 (fuente: docs.samsungknox.com):
+  // { customerId, resellerId, transactionId, devices: [ { device: "imei", type: "IMEI"|"MEID"|"SN" } ] }
   const kdpUploadPayload = {
     customerId,
     resellerId,
     transactionId,
-    devices: deviceIdentifiers,  // strings planos, NO objetos
+    devices: deviceIdentifiers.map((id) => ({
+      device: id,     // campo correcto: "device" (no deviceIdentifier, no meidImei, no imei)
+      type: 'IMEI',   // enum: IMEI | MEID | SN
+    })),
   };
 
   console.log('[Samsung Knox] uploadSamsungDevices - payload enviado a Knox KDP:');
